@@ -1,0 +1,128 @@
+package top.syshub.accountsx.adapters.mc;
+
+import com.mojang.authlib.minecraft.SessionService;
+import com.mojang.authlib.minecraft.UserApiService;
+import com.mojang.authlib.services.FriendsService;
+import com.mojang.authlib.services.MinecraftServicesDiscoveryService;
+import com.mojang.authlib.services.ProfileResult;
+import com.mojang.blaze3d.Blaze3D;
+import com.mojang.blaze3d.platform.ClipboardManager;
+import top.syshub.accountsx.adapters.mc.mixins.PlayerSkinProviderAccessor;
+import top.syshub.accountsx.adapters.mc.mixins.mixins.MinecraftClientAccessor;
+import top.syshub.accountsx.authlib.AccountSessionImpl;
+import top.syshub.accountsx.common.accounts.BaseAccount;
+import top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount;
+import top.syshub.accountsx.common.adapters.api.MinecraftPlatform;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
+import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.client.gui.screens.social.PlayerSocialManager;
+import net.minecraft.client.gui.screens.social.RemoteFriendListUpdateHandler;
+import net.minecraft.client.multiplayer.ProfileKeyPairManager;
+import net.minecraft.client.multiplayer.chat.report.ReportEnvironment;
+import net.minecraft.client.multiplayer.chat.report.ReportingContext;
+import net.minecraft.client.resources.SkinManager;
+import net.minecraft.client.telemetry.ClientTelemetryManager;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.Services;
+
+import java.net.Proxy;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImpl> {
+    @Override
+    public EnvironmentAccount fromCurrentClient() {
+        User session = Minecraft.getInstance().getUser();
+        return new EnvironmentAccount(session.getAccessToken(), session.getName(), session.getProfileId());
+    }
+
+    @Override
+    public void switchAccount(AccountSessionImpl session) {
+        UserApiService userAPIService = session.userAPIService();
+        BaseAccount.AccountStorage storage = session.storage();
+        UserApiService.UserProperties properties = session.properties();
+        ProfileResult profileResult = session.profileResult();
+        MinecraftServicesDiscoveryService discoveryService = session.discoveryService();
+
+        // switchAccount 只在已登录（AUTHORIZED）账号上调用，storage 三件套必然非空。
+        // 用 requireNonNull 显式声明该不变量，同时满足 User 构造器对 @NotNull 形参的要求。
+        String playerName = Objects.requireNonNull(storage.getPlayerName(), "playerName");
+        UUID playerUUID = Objects.requireNonNull(storage.getPlayerUUID(), "playerUUID");
+        String accessToken = Objects.requireNonNull(storage.getAccessToken(), "accessToken");
+        User s = new User(playerName, playerUUID, accessToken, Optional.empty(), Optional.empty());
+
+        Minecraft client = Minecraft.getInstance();
+        Services apiServices = Services.create(discoveryService, client.gameDirectory);
+        ((MinecraftClientAccessor) client).setApiServices(apiServices);
+        ((MinecraftClientAccessor) client).setSession(s);
+        ((MinecraftClientAccessor) client).setGameProfileFuture(CompletableFuture.completedFuture(profileResult));
+        ((MinecraftClientAccessor) client).setUserAPIService(userAPIService);
+        ((MinecraftClientAccessor) client).setUserPropertiesFuture(CompletableFuture.completedFuture(properties));
+        // 26.2 起 PlayerSocialManager 构造器要求 FriendsService 与 RemoteFriendListUpdateHandler
+        // 两个 @NotNull 实参；按新账号重建，使好友 / 在线状态功能在切号后仍可用。
+        FriendsService friendsService = discoveryService.createFriendsService(accessToken);
+        RemoteFriendListUpdateHandler friendListUpdateHandler = new RemoteFriendListUpdateHandler(friendsService, client);
+        ((MinecraftClientAccessor) client).setSocialInteractionManager(new PlayerSocialManager(client, userAPIService, friendsService, friendListUpdateHandler));
+        ((MinecraftClientAccessor) client).setTelemetryManager(new ClientTelemetryManager(client, userAPIService, s));
+        ((MinecraftClientAccessor) client).setProfileKeys(ProfileKeyPairManager.create(userAPIService, s, client.gameDirectory.toPath()));
+        ((MinecraftClientAccessor) client).setAbuseReportContext(ReportingContext.create(ReportEnvironment.local(), userAPIService));
+        ((MinecraftClientAccessor) client).setSkinProvider(new SkinManager(
+                ((PlayerSkinProviderAccessor) client.getSkinManager()).accountsX$getDirectory(),
+                apiServices,
+                ((PlayerSkinProviderAccessor) client.getSkinManager()).accountsX$getDownloader(),
+                ((PlayerSkinProviderAccessor) client.getSkinManager()).accountsX$getExecutor()
+        ));
+    }
+
+    @Override
+    public Proxy getGameProxy() {
+        return Minecraft.getInstance().getProxy();
+    }
+
+    @Override
+    public void openBrowser(String url) {
+        // 26.3 起 Util.getPlatform().openUri 已移除，改走 Blaze3D.openUri
+        Blaze3D.openUri(java.net.URI.create(url));
+    }
+
+    @Override
+    public Thread getMinecraftClientThread() {
+        return ((MinecraftClientAccessor) Minecraft.getInstance()).getThread();
+    }
+
+    @Override
+    public void crash(RuntimeException e) {
+        Minecraft.getInstance().schedule(() -> {
+            throw e;
+        });
+    }
+
+    @Override
+    public void copyText(String text) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.isSameThread()) {
+            // 26.3 起 ClipboardManager 走 SDL，不再接收 Window
+            new ClipboardManager().setClipboard(text);
+        } else {
+            client.schedule(() -> copyText(text));
+        }
+    }
+
+    @Override
+    public void showToast(String title, String description, Object... args) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.isSameThread()) {
+            SystemToast.addOrUpdate(
+                    Minecraft.getInstance().gui.toastManager(),
+                    SystemToast.SystemToastId.NARRATOR_TOGGLE,
+                    Component.translatable(title),
+                    description == null ? null : Component.translatable(description, args)
+            );
+        } else {
+            client.schedule(() -> showToast(title, description, args));
+        }
+    }
+}
