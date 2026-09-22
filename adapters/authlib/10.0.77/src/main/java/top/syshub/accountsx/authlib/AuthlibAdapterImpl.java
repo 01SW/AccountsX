@@ -9,6 +9,7 @@ import com.mojang.authlib.services.*;
 import com.mojang.authlib.services.request.AbuseReportRequest;
 import com.mojang.authlib.services.response.KeyPairResponse;
 import com.mojang.authlib.services.response.discovery.*;
+import com.mojang.authlib.minecraft.client.MinecraftClient;
 import com.mojang.authlib.minecraft.report.AbuseReportLimits;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftConstants;
@@ -40,7 +41,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 /**
  * authlib 10.0.77：YggdrasilAuthenticationService 已删除，改为
  * {@link MinecraftServicesDiscoveryService} + 合成 {@link DiscoveryResponse}，
- * 以兼容 authlib-injector 的固定路径 Yggdrasil 端点。
+ * 以兼容 authlib-injector / United-Injector 的固定路径 Yggdrasil 端点。
  */
 public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImpl> {
 

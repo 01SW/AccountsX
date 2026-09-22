@@ -3,8 +3,8 @@ package top.syshub.accountsx.common.accounts.impl.injector;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
-import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
-import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider.AuthlibInjectorAccount;
+import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAccountProvider;
+import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAccountProvider.UnitedInjectorAccount;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
@@ -21,13 +21,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * P1.3 安全网：证明网络层已可注入 —— 认证流程可在单测中用假 {@link HttpGateway} 驱动，
  * 无需真实网络或 MC 适配器。
  *
- * <p>用 {@link AuthlibInjectorAccountProvider#refresh} 的非 OAuth 单 profile 路径：
+ * <p>用 {@link UnitedInjectorAccountProvider#refresh} 的非 OAuth 单 profile 路径：
  * 该路径只调用一次 {@link HttpGateway#postJson(String, JsonElement)} 且不涉及
  * {@code Adapters} / {@code AvatarService}，因此可在假网关下独立验证刷新逻辑与注入缝。</p>
  */
 class HttpGatewayInjectionTest {
 
-    private static final String SERVER = "https://fake-yggdrasil.example/api/yggdrasil";
+    private static final String SERVER = "https://auth.mc-user.com:233/fake0000000000000000000000abcd";
     private static final String REFRESH_URL = SERVER + "/authserver/refresh";
     private static final String NEW_TOKEN = "new-injector-token";
     private static final String NEW_NAME = "Steve";
@@ -102,10 +102,10 @@ class HttpGatewayInjectionTest {
     @Test
     void refresh_usesInjectedGateway() throws ExecutionException, InterruptedException {
         FakeHttpGateway fake = new FakeHttpGateway();
-        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(fake);
+        UnitedInjectorAccountProvider provider = new UnitedInjectorAccountProvider(fake);
 
         // 非 OAuth 登录令牌（不含 "OAuth " 前缀），走非 OAuth 刷新路径。
-        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+        UnitedInjectorAccount account = new UnitedInjectorAccount(
                 "old-injector-token", "OldName", UUID.randomUUID(),
                 SERVER, UUID.randomUUID().toString(), null, null, 0L
         );
