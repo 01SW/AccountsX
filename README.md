@@ -10,7 +10,6 @@ Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Conne
 - **离线账号** — 自定义玩家名，无需联网
 - **Microsoft 账号** — 通过 device-code OAuth 登录正版
 - **Authlib-Injector** — 第三方 Yggdrasil 认证服务器
-- **United-Injector** — 联合通行证认证
 
 ## 构建
 

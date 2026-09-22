@@ -1,9 +1,11 @@
 package top.syshub.accountsx.common.manager.config;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
-import com.google.gson.reflect.TypeToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.AccountsX;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
@@ -22,6 +24,8 @@ import java.util.List;
 import java.util.UUID;
 
 public final class ConfigHandle {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ConfigHandle.class);
+
     private ConfigHandle() {}
 
     private static String id;
@@ -124,10 +128,20 @@ public final class ConfigHandle {
                 return List.of();
 
             try (Reader reader = Files.newBufferedReader(accountsFile, StandardCharsets.UTF_8)) {
-                return NetworkUtils.GSON.fromJson(
-                        reader,
-                        new TypeToken<List<? extends BaseAccount>>() {}.getType()
-                );
+                // 逐条解析：单条未知 type（如已移除的账号类型）只跳过该条并记 warn，
+                // 不能让一条坏数据抛错导致整个账号集加载失败（否则上层返回空列表后 save 回写会清空用户全部账号）。
+                JsonElement root = NetworkUtils.GSON.fromJson(reader, JsonElement.class);
+                List<BaseAccount> accounts = new ArrayList<>();
+                if (root instanceof JsonArray array) {
+                    for (JsonElement element : array) {
+                        try {
+                            accounts.add(NetworkUtils.GSON.fromJson(element, BaseAccount.class));
+                        } catch (RuntimeException e) {
+                            LOGGER.warn("跳过一条无法解析的账号（可能是已移除的账号类型），该账号不会被加载。", e);
+                        }
+                    }
+                }
+                return accounts;
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to load accounts file", e);
