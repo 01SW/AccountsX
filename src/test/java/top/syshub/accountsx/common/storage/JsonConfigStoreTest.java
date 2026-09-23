@@ -53,6 +53,16 @@ class JsonConfigStoreTest {
             public Path legacyHomeDir() {
                 return fs.getPath("/home/.accountsx");
             }
+
+            @Override
+            public Path globalConfigFile() {
+                return path;
+            }
+
+            @Override
+            public Path avatarCacheDir() {
+                return fs.getPath("/home/.cache/accountsx/avatars");
+            }
         };
         return new JsonConfigStore(fs, path, GSON, chain, ctx,
                 (title, desc, args) -> toastTitles.add(title));
@@ -235,6 +245,37 @@ class JsonConfigStoreTest {
         assertThat(toastTitles).isEmpty();
         assertThat(root.version()).isEqualTo(ConfigStore.CURRENT_VERSION);
         assertThat(root.raw().get("upgraded").getAsBoolean()).isTrue();
+    }
+
+    @Test
+    void load_afterMigration_persistsUpgradedFile() throws IOException {
+        // P2.3 回写语义：迁移成功后立刻落盘，不依赖调用方 save() 自愈
+        Files.createDirectories(path.getParent());
+        Files.writeString(path, "{\"version\":3,\"accounts\":[{\"type\":\"offline\"}]}", StandardCharsets.UTF_8);
+
+        Migration fakeV3toV4 = new Migration() {
+            @Override
+            public int fromVersion() {
+                return 3;
+            }
+
+            @Override
+            public int toVersion() {
+                return 4;
+            }
+
+            @Override
+            public JsonObject apply(JsonObject config, MigrationContext ctx) {
+                config.addProperty("upgraded", true);
+                return config;
+            }
+        };
+        store(new MigrationChain(List.of(fakeV3toV4))).load();
+
+        ConfigRoot onDisk = new ConfigRoot(JsonParser.parseString(
+                Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject());
+        assertThat(onDisk.version()).isEqualTo(ConfigStore.CURRENT_VERSION);
+        assertThat(onDisk.raw().get("upgraded").getAsBoolean()).isTrue();
     }
 
     // ── 安全约束 ────────────────────────────────────────────────────

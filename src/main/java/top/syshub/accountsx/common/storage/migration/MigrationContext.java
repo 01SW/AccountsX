@@ -15,4 +15,14 @@ public interface MigrationContext {
 
     /** 旧载荷目录 {@code ~/.accountsx/}。 */
     Path legacyHomeDir();
+
+    /**
+     * 全局配置文件（{@code ~/.config/accountsx.json}，D3 解析结果）。
+     * 3→4 的"追加语义"需要读它已有的内容做去重合并，并原子写回迁移结果；
+     * 链从存储层 load() 触发时它就是被迁移的文件本身。
+     */
+    Path globalConfigFile();
+
+    /** 头像缓存目录 {@code ~/.cache/accountsx/avatars/}（D4；3→4 把旧 base64 头像外移到这里）。 */
+    Path avatarCacheDir();
 }

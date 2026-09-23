@@ -81,8 +81,8 @@ public final class JsonConfigStore implements ConfigStore {
 
     /**
      * 生产默认实例：平台文件系统 + D3 路径解析 + 游戏内 toast。
-     * {@code migrations}/{@code ctx} 由 P2.3 接线时提供；此处先用 {@link MigrationChain#EMPTY}，
-     * 遇到旧版本配置会安全降级而不是覆写。
+     * 迁移链由调用方传入（生产用 {@code StandardMigrations.chain(NetworkUtils.GSON)}，P2.4 接线；
+     * 传 {@link MigrationChain#EMPTY} 时遇到旧版本配置会安全降级而不是覆写）。
      */
     public static JsonConfigStore createDefault(MigrationChain migrations) {
         FileSystem fs = FileSystems.getDefault();
@@ -102,6 +102,16 @@ public final class JsonConfigStore implements ConfigStore {
             @Override
             public Path legacyHomeDir() {
                 return fs.getPath(System.getProperty("user.home"), ".accountsx");
+            }
+
+            @Override
+            public Path globalConfigFile() {
+                return path;
+            }
+
+            @Override
+            public Path avatarCacheDir() {
+                return fs.getPath(System.getProperty("user.home"), ".cache", "accountsx", "avatars");
             }
         };
         return new JsonConfigStore(fs, path, NetworkUtils.GSON, migrations, ctx,
@@ -173,6 +183,16 @@ public final class JsonConfigStore implements ConfigStore {
                 degrade(e, true, "accountsx.config.degraded.title", "accountsx.config.degraded.desc");
                 return ConfigRoot.empty(CURRENT_VERSION);
             }
+            // 迁移成功立刻回写（P2.3：不再依赖调用方 save() 自愈——旧实现靠
+            // initialize() 末尾的无条件 save()，中途崩溃会重复迁移产生残留）。
+            // 回写失败不致命：内存里已是新 schema，下次启动重跑迁移（各跳幂等）。
+            ConfigRoot upgraded = new ConfigRoot(raw);
+            try {
+                save(upgraded);
+            } catch (IOException e) {
+                LOGGER.error("迁移结果回写失败，下次启动将重试迁移。", e);
+            }
+            return upgraded;
         }
         return new ConfigRoot(raw);
     }

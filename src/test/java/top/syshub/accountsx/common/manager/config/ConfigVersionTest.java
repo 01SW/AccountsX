@@ -124,7 +124,7 @@ class ConfigVersionTest {
      * 仅验证 JSON 转换逻辑。完整迁移链测试在 P2.3。
      * </p>
      */
-    @Disabled("side-effect: writeAccounts() writes to ~/.accountsx/; fix in P2.3")
+    @Disabled("副作用：ConfigHandle.writeAccounts() 写真实 ~/.accountsx/；新链侧已由 StandardMigrationsTest 覆盖（P2.3），本用例随 ConfigVersion 在 P2.4 移除")
     @Test
     void v2ToV3_accountsExtracted() {
         JsonObject config = makeConfig(2, accountsArray(
@@ -147,7 +147,7 @@ class ConfigVersionTest {
      * 从 v0 开始走完整迁移链（不含 SECURITY_STORAGE 的 I/O 部分）。
      * 验证 v0→v1→v2 的转换链。
      */
-    @Disabled("完整链需要 SECURITY_STORAGE; 修复见 P2.3")
+    @Disabled("完整链已由新存储层 StandardMigrationsTest#fullChain_v0ToV4 覆盖（P2.3）；本用例针对旧链，随 ConfigVersion 在 P2.4 移除")
     @Test
     void fullChain_v0ToV2() {
         JsonObject config = makeConfig(0, accountsArray(

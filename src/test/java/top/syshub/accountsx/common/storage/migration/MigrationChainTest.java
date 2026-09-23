@@ -36,6 +36,16 @@ class MigrationChainTest {
         public Path legacyHomeDir() {
             return fs.getPath("/home/.accountsx");
         }
+
+        @Override
+        public Path globalConfigFile() {
+            return fs.getPath("/config/accountsx.json");
+        }
+
+        @Override
+        public Path avatarCacheDir() {
+            return fs.getPath("/home/.cache/accountsx/avatars");
+        }
     };
 
     private static Migration hop(int from, int to, List<Integer> appliedOrder) {
