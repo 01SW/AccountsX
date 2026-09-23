@@ -46,7 +46,7 @@ MC 26.1+ 是非混淆版本（无 ProGuard），Loom 没有 `remapJar` 任务，
 | `MinecraftAdapterImpl` 类名是数据契约                                                                                                                      | 写在各适配器 `fabric.mod.json` 的 `accountsx:adapter.mc.class` 里                                                                                                                                      | 13 个适配器中找不到实现，模组崩溃                                       | 人工校验 + fabric.mod.json 校验                                                                             |
 | `~/.accountsx/` 下的文件含明文 token                                                                                                                       | 所有日志、报错、提交都不得包含其内容                                                                                                                                                                   | token 泄露                                                              | 人工 review                                                                                                 |
 | `depends.minecraft` 使用 `>=` 无上界                                                                                                                       | Loader 在候选中取版本号最大者；适配器版本为 `${minecraft}-${version}`，MC 版本是最左的版本核心段（数字逐位比较，短者补 0），而 CI 注入的 `+build.N` 落在被忽略的 build 段，不会破坏排序                | 版本排序被破坏时选错适配器 → mixin 目标不存在 → 崩溃                    | `:validateAdapterMatrix`（P0.5）                                                                            |
-| 载荷读失败时**不得**写回配置                                                                                                                               | `initialize()` 末尾的无条件 `save()` 会把文件覆写成 `[]`，静默丢失用户全部账号                                                                                                                         | 一次瞬时 I/O 错误永久删除所有账号                                       | P1 修复（只读降级模式）                                                                                     |
+| 载荷读失败时**不得**写回配置                                                                                                                               | `initialize()` 末尾的无条件 `save()` 会把文件覆写成 `[]`，静默丢失用户全部账号                                                                                                                         | 一次瞬时 I/O 错误永久删除所有账号                                       | P2.2 `JsonConfigStore` 只读降级（`7341005`，P2.4 接线后全面生效）                                                                                     |
 | 实例配置里的 `id` 是载荷文件的索引；账号数据在 `~/.accountsx/<id>.json`                                                                                    | 实例目录可能被同步、打包、提交，明文 token 不宜放其中                                                                                                                                                  | 混淆配置与载荷的职责                                                    | 人工理解                                                                                                    |
 | 26.1+ 使用 `fabric-loom`（非 `fabric-loom-remap`）                                                                                                         | 非混淆版本没有 `remapJar` 任务                                                                                                                                                                         | 构建失败                                                                | `adapters.toml` 的 `obfuscated` + 插件断言                                                                  |
 | `configId`（`AccountType` 枚举的第三个参数）是持久化契约                                                                                                   | 写入 `accounts.json`，迁移时按此识别类型                                                                                                                                                               | 未知 type 导致整个账号集加载失败                                        | `ConfigVersion.RENAME_ACCOUNT_TYPE`                                                                         |
@@ -78,6 +78,8 @@ AccountsX（根项目 / common）
 │   │   │   └── config/
 │   │   │       ├── ConfigHandle.java    # 配置读写（实例配置 + ~/.accountsx/ 载荷）
 │   │   │       └── ConfigVersion.java   # 迁移链（当前 v0 → v3）
+│   │   ├── storage/                     # P2.2 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore，未接线）
+│   │   │   └── migration/               # Migration / MigrationContext / MigrationChain 接缝（具体迁移跳在 P2.3）
 │   │   ├── ui/                          # 版本无关的 UIScreen / Memory / Translator
 │   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层，P1.3）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
@@ -88,7 +90,7 @@ AccountsX（根项目 / common）
 │   └── ├── buildSrc/                        # 预编译 Gradle 插件（3 个）
 └── src/main/resources/
     ├── fabric.mod.json              # 核心模组元数据
-    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，41 个 key）
+    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，43 个 key）
     └── assets/accountsx/textures/gui/  # GUI 资源单一数据源：account.png（切换图标）、
                                         #  sprites/icon/account.png（标题屏精灵）、alex_avatar.png（默认头像）
 ```
@@ -141,6 +143,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - 账号载荷：`~/.accountsx/<id>.json`（用户主目录，跨实例共享）
 - 迁移：`ConfigVersion` 在 version 较旧时就地升级 JSON
 - `ENV_DEFAULT` 账号不写入磁盘
+- P2.2 起另有 `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护），**当前未接线**，运行时仍走上述双文件结构；切换在 P2.4（见 `REFACTORING/03-roadmap.md`）
 
 ### MC 适配器（`adapters/mc/<version>`）
 
