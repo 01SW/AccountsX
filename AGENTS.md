@@ -79,7 +79,7 @@ AccountsX（根项目 / common）
 │   │   │       ├── ConfigHandle.java    # 配置读写（实例配置 + ~/.accountsx/ 载荷）
 │   │   │       └── ConfigVersion.java   # 迁移链（当前 v0 → v3）
 │   │   ├── storage/                     # P2.2 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore，未接线）
-│   │   │   └── migration/               # Migration / MigrationContext / MigrationChain 接缝（具体迁移跳在 P2.3）
+│   │   │   └── migration/               # Migration / MigrationChain 接缝 + 四跳实现（P2.3 `89b9f5e`，仍未接线）
 │   │   ├── ui/                          # 版本无关的 UIScreen / Memory / Translator
 │   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层，P1.3）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
@@ -143,7 +143,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - 账号载荷：`~/.accountsx/<id>.json`（用户主目录，跨实例共享）
 - 迁移：`ConfigVersion` 在 version 较旧时就地升级 JSON
 - `ENV_DEFAULT` 账号不写入磁盘
-- P2.2 起另有 `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护），**当前未接线**，运行时仍走上述双文件结构；切换在 P2.4（见 `REFACTORING/03-roadmap.md`）
+- P2.2 起另有 `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护），P2.3（`89b9f5e`）补齐标准迁移链（0→1→2→3→4，含方案 C 的 `UNIFY_AND_DECOUPLE`），**当前未接线**，运行时仍走上述双文件结构；切换在 P2.4（见 `REFACTORING/03-roadmap.md`）
 
 ### MC 适配器（`adapters/mc/<version>`）
 
