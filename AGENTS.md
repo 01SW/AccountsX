@@ -73,13 +73,13 @@ AccountsX（根项目 / common）
 │   │   │   ├── Adapters.java            # @Deprecated 转发壳（兼容旧适配器）
 │   │   │   └── Platforms.java           # 反射加载适配器实现（memoize）
 │   │   ├── manager/
-│   │   │   ├── AccountManager.java      # 账号列表管理 + 刷新调度
+│   │   │   ├── AccountManager.java      # 编排（刷新/登录；P2.4 起集合与持久化走 AccountRepository）
+│   │   │   ├── AccountRepository.java   # P2.4 账号仓储（集合+current+标脏合并写+首启动触发迁移）
 │   │   │   ├── AccountWorker.java       # @Deprecated 转发到 TaskScheduler（兼容旧适配器）；register/unregister 已删除
 │   │   │   └── config/
-│   │   │       ├── ConfigHandle.java    # 配置读写（实例配置 + ~/.accountsx/ 载荷）
-│   │   │       └── ConfigVersion.java   # 迁移链（当前 v0 → v3）
-│   │   ├── storage/                     # P2.2 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore，未接线）
-│   │   │   └── migration/               # Migration / MigrationChain 接缝 + 四跳实现（P2.3 `89b9f5e`，仍未接线）
+│   │   │       └── （P2.4 删除 `ConfigHandle` / `ConfigVersion`，由 `AccountRepository` + `storage/` 接管）
+│   │   ├── storage/                     # P2.2 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore，P2.4 已接线）
+│   │   │   └── migration/               # Migration / MigrationChain 接缝 + 四跳实现 + StandardMigrations（P2.3 `89b9f5e`，P2.4 已接线）
 │   │   ├── ui/                          # 版本无关的 UIScreen / Memory / Translator
 │   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层，P1.3）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
@@ -130,7 +130,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 ### 运行时流程
 
 1. `AccountsX.onInitializeClient` → `AccountManager.initialize` + `MicrosoftConstants.initialize`
-2. Manager 用环境账号 + `ConfigHandle.load()` 填充列表，在 worker 上刷新非授权账号
+2. Manager 用环境账号 + `AccountRepository`（新存储 `load()` + 首启动旧配置迁移）在 worker 上刷新非授权账号
 3. UI（各 MC 版本的 `AccountScreen`）在**客户端线程**上修改账号
 4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度，不再用全局注册表登记 worker 线程
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
@@ -143,7 +143,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - 账号载荷：`~/.accountsx/<id>.json`（用户主目录，跨实例共享）
 - 迁移：`ConfigVersion` 在 version 较旧时就地升级 JSON
 - `ENV_DEFAULT` 账号不写入磁盘
-- P2.2 起另有 `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护），P2.3（`89b9f5e`）补齐标准迁移链（0→1→2→3→4，含方案 C 的 `UNIFY_AND_DECOUPLE`），**当前未接线**，运行时仍走上述双文件结构；切换在 P2.4（见 `REFACTORING/03-roadmap.md`）
+- `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护）+ 标准迁移链（0→1→2→3→4，含方案 C 的 `UNIFY_AND_DECOUPLE`），P2.4 起由 `manager/AccountRepository` 接线：`AccountManager.initialize` 构造默认存储并触发首启动旧配置迁移；旧双文件结构（`ConfigHandle`/`ConfigVersion`）已删除（见 `REFACTORING/03-roadmap.md`）
 
 ### MC 适配器（`adapters/mc/<version>`）
 
@@ -255,12 +255,12 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 2. **Provider 实现**（`common/accounts/impl/`）— 实现 `AccountProvider<T>` 的 `configure` / `validate` / `login` / `refresh` / `createAccountContext`
 3. **账号模型**（`BaseAccount` 子类）— 定义账号数据结构，注册 Gson TypeAdapter（若需要自定义序列化）
 4. **i18n key**（`en_us.json` + `zh_cn.json`）— 添加 `accountsx.account.type.<type 名小写>.name` 和 `.using`（注意是 enum name 小写，不是 configId）
-5. **配置迁移**（`ConfigVersion.java`）— 如果 configId 是新增的，确保旧配置中的未知 type 不会导致整个加载失败
+5. **配置迁移**（`storage/migration/` 新增一跳，注册进 `StandardMigrations`）— 如果 configId 是新增的，确保旧配置中的未知 type 不会导致整个加载失败
 6. **适配器 UI**（各 `adapters/mc/<ver>/ui/AccountScreen.java`）— 确保 `configure()` / `validate()` 在 `UIScreen` SPI 下工作
 
 ### 改配置格式
 
-- 必须加 `ConfigVersion` 迁移 + 迁移测试
+- 必须加 `storage/migration` 迁移跳 + 迁移测试
 - 迁移后回写 version 并更新 `CURRENT_VERSION`
 - 详见 `docs/config-schema.md`（P2 阶段产出）
 

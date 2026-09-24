@@ -7,39 +7,52 @@ import top.syshub.accountsx.common.accounts.model.AccountState;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
-import top.syshub.accountsx.common.manager.config.ConfigHandle;
+import top.syshub.accountsx.common.storage.ConfigStore;
+import top.syshub.accountsx.common.storage.JsonConfigStore;
+import top.syshub.accountsx.common.storage.migration.StandardMigrations;
 import top.syshub.accountsx.common.task.TaskScheduler;
+import top.syshub.accountsx.common.utils.NetworkUtils;
 import top.syshub.accountsx.common.utils.Threading;
+import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
 import java.util.ArrayList;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.List;
 
 public final class AccountManager {
-    private static final List<BaseAccount> accounts = new CopyOnWriteArrayList<>();
-    private static final List<BaseAccount> readonlyAccounts = Collections.unmodifiableList(accounts);
-    private static volatile BaseAccount current = null;
+    private static AccountRepository repository;
 
     private AccountManager() {
     }
 
+    /** 测试/诊断用：替换仓储实例（生产路径由 {@link #initialize()} 构造）。 */
+    static void setRepository(AccountRepository repository) {
+        AccountManager.repository = repository;
+    }
+
+    static AccountRepository repository() {
+        if (repository == null)
+            throw new IllegalStateException("AccountManager 未初始化（initialize 未调用）。");
+        return repository;
+    }
+
     public static List<BaseAccount> getAccountsView() {
-        return readonlyAccounts;
+        return repository().view();
     }
 
     public static BaseAccount getCurrentAccount() {
-        return current;
+        return repository().getCurrent();
     }
 
     public static void initialize() {
-        accounts.add(current = Platforms.getMinecraftPlatform().fromCurrentClient());
-
-        accounts.addAll(ConfigHandle.load());
+        ConfigStore store = JsonConfigStore.createDefault(StandardMigrations.chain(NetworkUtils.GSON));
+        repository = new AccountRepository(store);
+        // 环境账号打头（运行时派生，永不落盘），随后是新存储的账号
+        repository.initialize(Platforms.getMinecraftPlatform().fromCurrentClient(),
+                FabricLoader.getInstance().getConfigDir().resolve("accountsx"));
 
         List<BaseAccount> toRefresh = new ArrayList<>();
-        for (BaseAccount account : accounts) {
+        for (BaseAccount account : repository.view()) {
             if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
                 toRefresh.add(account);
             }
@@ -56,8 +69,8 @@ public final class AccountManager {
                 }
             });
         }
-
-        save();
+        // 注意：initialize 末尾不再无条件 save（审计 1.8 的击穿点已随 ConfigHandle 删除）。
+        // 迁移写入由 3→4 自己落盘；load 的结果本来就是最新状态，无需回写。
     }
 
     @Threading.Thread(Threading.ThreadRole.CLIENT)
@@ -68,25 +81,21 @@ public final class AccountManager {
             return;
         }
 
-        accounts.remove(account);
-        save();
+        repository().drop(account);
     }
 
     @Threading.Thread(Threading.ThreadRole.CLIENT)
     public static void addAccount(BaseAccount account) {
         Threading.checkMinecraftClientThread();
 
-        accounts.add(account);
-        save();
+        repository().add(account);
     }
 
     @Threading.Thread(Threading.ThreadRole.CLIENT)
     public static void moveAccount(BaseAccount account, int index) {
         Threading.checkMinecraftClientThread();
 
-        accounts.remove(account);
-        accounts.add(index, account);
-        save();
+        repository().move(account, index);
     }
 
     @Threading.Thread(Threading.ThreadRole.WORKER)
@@ -96,7 +105,7 @@ public final class AccountManager {
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
             refreshAccount(account, true);
 
-            save();
+            repository().touch(account);
         }
 
         return Platforms.authlibBridge().createAccountProfile(
@@ -110,7 +119,7 @@ public final class AccountManager {
     public static void switchAccount(BaseAccount account, AccountSession session) {
         Threading.checkMinecraftClientThread();
 
-        current = account;
+        repository().setCurrent(account);
         Platforms.getMinecraftPlatform().switchAccount(session);
     }
 
@@ -140,9 +149,5 @@ public final class AccountManager {
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
             throw new IOException("Account provider " + account.getAccountType() + " has finished it's refresh invocation, but neither an exception was thrown nor set the account storage to AUTHORIZED");
         }
-    }
-
-    private static void save() {
-        TaskScheduler.submit(ConfigHandle::write);
     }
 }

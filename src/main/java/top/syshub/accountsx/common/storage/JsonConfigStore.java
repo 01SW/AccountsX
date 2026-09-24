@@ -151,7 +151,8 @@ public final class JsonConfigStore implements ConfigStore {
 
         JsonObject raw;
         try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-            JsonElement parsed = gson.fromJson(reader, JsonElement.class);
+            // 裸 JsonParser：gson 实例带的 UUIDTypeAdapter 等会污染 JsonElement 目标（P2.4 实测回归）
+            JsonElement parsed = com.google.gson.JsonParser.parseReader(reader);
             if (!(parsed instanceof JsonObject jo))
                 throw new IllegalStateException("配置根节点不是 JSON object");
             raw = jo;
@@ -293,8 +294,13 @@ public final class JsonConfigStore implements ConfigStore {
         return readOnly;
     }
 
-    /** 配置文件的解析结果路径（诊断用；不含用户数据）。 */
+    /** 配置文件的解析结果路径（诊断用；不含用户数据）。触发迁移逻辑用它定位全局文件。 */
     public Path path() {
         return path;
+    }
+
+    /** 迁移执行环境（P2.4 触发旧实例迁移时复用同一份路径配置）。 */
+    public MigrationContext migrationContext() {
+        return migrationContext;
     }
 }

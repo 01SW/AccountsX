@@ -35,6 +35,14 @@ public abstract class AbstractInjectorAccount extends BaseAccount {
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public final void setLoginProfile(String loginToken, String preferredPlayerUUID) {
         Threading.checkAccountWorkerThread();
+        setLoginTokenForMigration(loginToken, preferredPlayerUUID);
+    }
+
+    /**
+     * 与 {@link #setLoginProfile} 同效果但无线程检查：仅供启动加载/迁移时
+     * 还原已持久化的登录态。运行时刷新仍走 {@link #setLoginProfile}。
+     */
+    public final void setLoginTokenForMigration(String loginToken, String preferredPlayerUUID) {
         this.loginToken = loginToken;
         this.preferredPlayerUUID = preferredPlayerUUID;
     }

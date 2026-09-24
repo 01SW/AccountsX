@@ -151,7 +151,9 @@ public final class UnifyAndDecouple implements Migration {
             return new JsonArray();
         }
         try (Reader reader = Files.newBufferedReader(payload, StandardCharsets.UTF_8)) {
-            JsonElement parsed = gson.fromJson(reader, JsonElement.class);
+            // 注意：必须用裸 JsonParser 读——注入的 gson 可能带 UUIDTypeAdapter 等，
+            // 会在 JsonElement 目标下抛错（JsonElement 不需要任何适配器）。
+            JsonElement parsed = JsonParser.parseReader(reader);
             if (parsed == null || parsed.isJsonNull())
                 return new JsonArray();
             if (!(parsed instanceof JsonArray accounts))
@@ -169,7 +171,7 @@ public final class UnifyAndDecouple implements Migration {
             return null;
         JsonElement parsed;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            parsed = gson.fromJson(reader, JsonElement.class);
+            parsed = JsonParser.parseReader(reader);
         } catch (JsonParseException e) {
             throw new IllegalStateException("全局配置文件已存在但解析失败，拒绝覆写: " + file, e);
         }
