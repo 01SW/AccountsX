@@ -25,11 +25,6 @@ public final class AccountManager {
     private AccountManager() {
     }
 
-    /** 测试/诊断用：替换仓储实例（生产路径由 {@link #initialize()} 构造）。 */
-    static void setRepository(AccountRepository repository) {
-        AccountManager.repository = repository;
-    }
-
     static AccountRepository repository() {
         if (repository == null)
             throw new IllegalStateException("AccountManager 未初始化（initialize 未调用）。");

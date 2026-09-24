@@ -28,6 +28,16 @@ public interface ConfigStore {
     /** 原子写：{@code .tmp} → fsync → {@code ATOMIC_MOVE}。只读降级模式下丢弃并记 warn。 */
     void save(ConfigRoot root) throws IOException;
 
+    /**
+     * 保存一份已序列化好的快照（与 {@link #save} 同等原子语义）。
+     * 给"锁内序列化、锁外落盘"的调用方用：快照文本在调用方锁内生成，
+     * 落盘时不再触碰 live 对象，避免序列化与并发修改撕裂（P2.4-review 竞态项）。
+     * 默认实现按 {@code save} 语义回放（只读降级同样丢弃）。
+     */
+    default void saveSnapshot(String json) throws IOException {
+        save(new ConfigRoot(com.google.gson.JsonParser.parseString(json).getAsJsonObject()));
+    }
+
     /** 本次会话是否处于只读降级模式（读失败 / 迁移失败 / 配置版本高于模组支持版本）。 */
     boolean isReadOnly();
 }

@@ -24,11 +24,11 @@ import java.util.stream.Collectors;
 
 @JsonAdapter(AccountType.AccountTypeAdapter.class)
 public enum AccountType {
-    ENV_DEFAULT(EnvironmentAccount.class, new EnvironmentAccountProvider(Platforms.getHttpGateway()), null),
-    OFFLINE(OfflineAccount.class, new OfflineAccountProvider(Platforms.getHttpGateway()), "offline"),
-    MICROSOFT(MicrosoftAccount.class, new MicrosoftAccountProvider(Platforms.getHttpGateway()), "microsoft"),
-    AUTHLIB_INJECTOR(AuthlibInjectorAccountProvider.AuthlibInjectorAccount.class, new AuthlibInjectorAccountProvider(Platforms.getHttpGateway()), "injector.authlib-injector"),
-    UNITED_INJECTOR(UnitedInjectorAccountProvider.UnitedInjectorAccount.class, new UnitedInjectorAccountProvider(Platforms.getHttpGateway()), "injector.united");
+    ENV_DEFAULT(EnvironmentAccount.class, new EnvironmentAccountProvider(Platforms.getHttpGateway()), null, null),
+    OFFLINE(OfflineAccount.class, new OfflineAccountProvider(Platforms.getHttpGateway()), "offline", "offline"),
+    MICROSOFT(MicrosoftAccount.class, new MicrosoftAccountProvider(Platforms.getHttpGateway()), "microsoft", "microsoft"),
+    AUTHLIB_INJECTOR(AuthlibInjectorAccountProvider.AuthlibInjectorAccount.class, new AuthlibInjectorAccountProvider(Platforms.getHttpGateway()), "injector.authlib-injector", "yggdrasil"),
+    UNITED_INJECTOR(UnitedInjectorAccountProvider.UnitedInjectorAccount.class, new UnitedInjectorAccountProvider(Platforms.getHttpGateway()), "injector.united", "united");
 
     public static final AccountType[] VALUES = values();
 
@@ -40,10 +40,24 @@ public enum AccountType {
 
     private final String id;
 
-    AccountType(Class<? extends BaseAccount> accountClass, AccountProvider<?> accountProvider, String id) {
+    /** v4 短 kind（P2.4 引入，P3 的 AuthServerKind 统一用它；ENV_DEFAULT 无 kind，永不落盘）。 */
+    private final String kind;
+
+    AccountType(Class<? extends BaseAccount> accountClass, AccountProvider<?> accountProvider, String id, String kind) {
         this.accountClass = accountClass;
         this.accountProvider = accountProvider;
         this.id = id;
+        this.kind = kind;
+    }
+
+    /** 持久化契约 configId（第三个构造参数），见 AGENTS.md 硬性不变量。 */
+    public String getId() {
+        return id;
+    }
+
+    /** v4 短 kind（ENV_DEFAULT 返回 null，调用方须先排除环境账号）。 */
+    public String getKind() {
+        return kind;
     }
 
     public Class<? extends BaseAccount> getAccountClass() {

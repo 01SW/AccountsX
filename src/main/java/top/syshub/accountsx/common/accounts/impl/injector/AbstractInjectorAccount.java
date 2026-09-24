@@ -39,8 +39,9 @@ public abstract class AbstractInjectorAccount extends BaseAccount {
     }
 
     /**
-     * 与 {@link #setLoginProfile} 同效果但无线程检查：仅供启动加载/迁移时
-     * 还原已持久化的登录态。运行时刷新仍走 {@link #setLoginProfile}。
+     * 与 {@link #setLoginProfile} 同效果但无线程检查：仅 {@code AccountRepository.fromJson}
+     * 在启动加载时还原已持久化的登录态（同包外唯一调用方，protected 嫌窄、public 嫌宽，
+     * 取 public 并在此注明约束）。运行时刷新仍走 {@link #setLoginProfile}。
      */
     public final void setLoginTokenForMigration(String loginToken, String preferredPlayerUUID) {
         this.loginToken = loginToken;

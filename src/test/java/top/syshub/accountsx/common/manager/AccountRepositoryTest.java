@@ -77,6 +77,24 @@ class AccountRepositoryTest {
         return new DelegatingStore(inner);
     }
 
+    /** v4 迁移产物形状的 OAuth 账号：endpoint/clientId 只在 servers[].oauth，不在 credentials。 */
+    private static String migratedOauthFixture(String uuid) {
+        JsonObject credentials = new JsonObject();
+        credentials.addProperty("oauth", true);
+        credentials.addProperty("accessToken", "fake-a");
+        credentials.addProperty("refreshToken", "fake-r");
+        JsonObject account = new JsonObject();
+        account.addProperty("type", "yggdrasil");
+        account.addProperty("server", "https://example.invalid/api/yggdrasil");
+        JsonObject profile = new JsonObject();
+        profile.addProperty("name", "Alex");
+        profile.addProperty("uuid", uuid);
+        account.add("profile", profile);
+        account.add("credentials", credentials);
+        account.addProperty("avatarKey", "fake-key");
+        return account.toString();
+    }
+
     /** 测试用装饰器：记录 save 快照，同时暴露 MigrationContext（实现仓储的 Contextual）。 */
     private final class DelegatingStore implements ConfigStore, AccountRepository.Contextual {
         private final JsonConfigStore inner;
@@ -164,15 +182,12 @@ class AccountRepositoryTest {
         repository.drop(alex);
         assertThat(repository.view()).containsExactly(steve);
 
-        // 连续变更合并写：等待所有排队写任务落地后，落盘次数必须 < 变更次数（4 次）。
-        // 串行通道 + writePending 合并保证：任务数 ≤ 2（add 触发的第一次 + 后续合并的一次）。
-        long deadline = System.currentTimeMillis() + 10000;
-        while (writes.size() < 2 && System.currentTimeMillis() < deadline)
-            TimeUnit.MILLISECONDS.sleep(20);
-        awaitWrites(writes, writes.size() >= 2 ? 2 : 1, "等待写任务落地");
+        // 连续变更合并写：4 次变更的落盘次数必须 < 4（review 断言恒真项修复：
+        // 期望值写死为 2——串行通道 + writePending 闸门保证任务数 ≤ 2，
+        // 多等一轮确认没有第三个写任务再冒出来）。
+        awaitWrites(writes, 2, "合并写应恰好落盘 2 次");
         TimeUnit.MILLISECONDS.sleep(500);
-        int total = writes.size();
-        assertThat(total).as("合并写：4 次变更落盘次数应 < 4，实际=" + total).isLessThan(4);
+        assertThat(writes).as("4 次变更合并为 2 次落盘").hasSize(2);
         assertThat(writes.get(writes.size() - 1))
                 .isEqualTo("offline|069a79f444e94726a5befca90e38aaf5;");
     }
@@ -204,17 +219,13 @@ class AccountRepositoryTest {
     }
 
     @Test
-    void mapping_roundTrip_allShapes() {
+    void mapping_roundTrip_allShapes() throws Exception {
         String uuid = "069a79f444e94726a5befca90e38aaf5";
         List<String> fixtures = List.of(
                 "{\"type\":\"offline\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"" + uuid + "\"}}",
                 "{\"type\":\"microsoft\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"" + uuid
                         + "\"},\"credentials\":{\"accessToken\":\"fake-mc\",\"refreshToken\":\"fake-r\"}}",
-                "{\"type\":\"yggdrasil\",\"server\":\"https://example.invalid/api/yggdrasil\","
-                        + "\"profile\":{\"name\":\"Alex\",\"uuid\":\"" + uuid + "\"},"
-                        + "\"credentials\":{\"oauth\":true,\"accessToken\":\"fake-a\",\"refreshToken\":\"fake-r\","
-                        + "\"tokenEndpoint\":\"https://example.invalid/oauth/token\",\"clientId\":\"1214\"},"
-                        + "\"avatarKey\":\"fake-key\"}",
+                migratedOauthFixture(uuid),
                 "{\"type\":\"united\",\"server\":\"https://auth.mc-user.com:233/0123456789abcdef0123456789abcdef\","
                         + "\"profile\":{\"name\":\"Alex\",\"uuid\":\"" + uuid + "\"},"
                         + "\"credentials\":{\"accessToken\":\"fake-u\"}}");
@@ -229,12 +240,33 @@ class AccountRepositoryTest {
             if (v4.has("server"))
                 assertThat(back.get("server").getAsString()).isEqualTo(v4.get("server").getAsString());
         }
-        // OAuth 信封往返：loginToken 还原后刷新链路可用
+        // OAuth 信封往返：3→4 不在账号 credentials 放 endpoint/clientId，
+        // fromJson 必须按 server 从 servers[] 反查（review a1 的断链回归）。
+        com.google.gson.JsonArray servers = JsonParser.parseString(
+                "[{\"type\":\"yggdrasil\",\"apiRoot\":\"https://example.invalid/api/yggdrasil\","
+                        + "\"oauth\":{\"clientId\":\"1214\",\"tokenEndpoint\":\"https://example.invalid/oauth/token\"}}]")
+                .getAsJsonArray();
         JsonObject ygg = JsonParser.parseString(fixtures.get(2)).getAsJsonObject();
         var account = (top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount)
-                AccountRepository.fromJson(ygg);
+                AccountRepository.fromJson(ygg, servers);
         assertThat(account.getLoginToken()).startsWith("OAuth ");
-        assertThat(AccountRepository.toJson(account).getAsJsonObject("credentials").get("oauth").getAsBoolean()).isTrue();
+        assertThat(account.getLoginToken()).contains("fake-r");
+        // 无 servers 反查时还原不出信封：loginToken 回退为 accessToken（密码流语义），
+        // 刷新走密码 refresh 而非坏 token；OAuth 标记丢失是已知降级（review a1 场景要求 servers 同行）。
+        var bare = (top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount)
+                AccountRepository.fromJson(ygg);
+        assertThat(bare.getLoginToken()).isEqualTo("fake-a");
+        // 未知 type 条目：snapshot 写回时原样保留（review a2 回归）。
+        // 注意顺序：先写全局文件，再 initialize——load() 读到真实内容才会保留。
+        Files.createDirectories(global.getParent());
+        Files.writeString(global, "{\"version\":4,\"servers\":[],\"accounts\":["
+                + "{\"type\":\"future-type\",\"profile\":{\"name\":\"X\"}}]}", StandardCharsets.UTF_8);
+        AccountRepository repository = new AccountRepository(store(MigrationChain.EMPTY));
+        repository.initialize(null, null);
+        assertThat(repository.view()).isEmpty();
+        repository.markDirtyForTest();
+        awaitWrites(writes, 1, "snapshot 应保留未知条目");
+        assertThat(writes.get(writes.size() - 1)).contains("future-type");
     }
 
     @Test

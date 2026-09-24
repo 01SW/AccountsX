@@ -72,9 +72,9 @@ public final class AccountRepository {
         current = environment;
 
         boolean migratedNow = triggerLegacyMigration(legacyGameConfigDir);
-        // 注意顺序：触发器必须在 load() 之前跑。首启动时全局文件不存在，
-        // 触发器通过 MigrationContext.globalConfigFile() 定位并直接落盘 v4；
-        // 随后 load() 读到已迁移的 v4，不再走链、不落空文件覆盖。
+        // 触发器必须在 load() 之前跑：首启动时全局文件不存在，触发器经
+        // MigrationContext.globalConfigFile() 直接落盘 v4；随后 load() 读到已迁移的
+        // v4，不再走链、不落空文件覆盖。
         root = store.load();
         if (migratedNow)
             LOGGER.info("启动迁移完成。");
@@ -84,11 +84,10 @@ public final class AccountRepository {
                 continue;
             }
             try {
-                BaseAccount account = fromJson(jo);
+                BaseAccount account = fromJson(jo, root.servers());
                 if (account != null)
                     accounts.add(account);
-                else
-                    LOGGER.warn("全局配置含未知类型账号条目，已跳过（不删除，P3 注册表会接管未知条目）。");
+                // 未知 type 返回 null：下面 rebuild Preserved 会原样带回，不删除。
             } catch (RuntimeException e) {
                 // 单条坏了只跳过该条：未知 type 在 1→2 已移除，这里只防手工改坏的字段。
                 LOGGER.warn("全局配置含无法解析的账号条目，已跳过。", e);
@@ -135,9 +134,11 @@ public final class AccountRepository {
 
     private static JsonObject parseObject(String text) {
         try {
-            JsonElement parsed = top.syshub.accountsx.common.utils.NetworkUtils.GSON.fromJson(text, JsonElement.class);
+            // 裸 JsonParser：NetworkUtils.GSON 带 UUIDTypeAdapter，读 JsonElement 目标会炸（P2.4 实测）。
+            JsonElement parsed = com.google.gson.JsonParser.parseString(text);
             return parsed instanceof JsonObject jo ? jo : null;
         } catch (RuntimeException e) {
+            LOGGER.warn("JSON 解析失败。", e);
             return null;
         }
     }
@@ -190,22 +191,18 @@ public final class AccountRepository {
 
     public synchronized void add(BaseAccount account) {
         accounts.add(Objects.requireNonNull(account, "account"));
-        root.accounts().add(toJson(account));
         markDirty();
     }
 
     public synchronized void drop(BaseAccount account) {
-        if (account != null && accounts.remove(account)) {
-            removeJson(account);
+        if (account != null && accounts.remove(account))
             markDirty();
-        }
     }
 
     public synchronized void move(BaseAccount account, int index) {
         if (account == null || !accounts.remove(account))
             return;
         accounts.add(Math.max(0, Math.min(index, accounts.size())), account);
-        rebuildJson();
         markDirty();
     }
 
@@ -215,29 +212,26 @@ public final class AccountRepository {
             markDirty();
     }
 
-    private void removeJson(BaseAccount account) {
-        JsonArray array = root.accounts();
-        for (int i = array.size() - 1; i >= 0; i--) {
-            if (sameEntry(array.get(i), account)) {
-                array.remove(i);
-                return;
-            }
+    /**
+     * 写时从对象重建 JSON（login/refresh 改过的 storage 一定落盘），同时把
+     * load 时无法映射的条目（未知 type / 解析失败）原样带回——注释与行为一致：
+     * 跳过但不删除，P3 注册表接管。
+     */
+    private void snapshot() {
+        JsonArray preserved = new JsonArray();
+        for (JsonElement element : root.accounts()) {
+            if (element instanceof JsonObject jo && fromJson(jo, root.servers()) == null)
+                preserved.add(jo);
         }
-    }
-
-    private void rebuildJson() {
         JsonArray array = root.accounts();
         while (!array.isEmpty())
             array.remove(0);
+        for (JsonElement element : preserved)
+            array.add(element);
         for (BaseAccount account : accounts) {
             if (account.getAccountType() != AccountType.ENV_DEFAULT)
                 array.add(toJson(account));
         }
-    }
-
-    /** 写时统一从对象重建 JSON：保证 login/refresh 改过的 storage 一定落盘。 */
-    private void snapshot() {
-        rebuildJson();
     }
 
     // ── 标脏合并写 ──
@@ -254,14 +248,16 @@ public final class AccountRepository {
             writePending = true;
         }
         TaskScheduler.submit(() -> {
-            ConfigRoot toSave;
+            // 深拷贝快照必须在锁内做：root.accounts() 是 live 数组，锁外序列化会被
+            // CLIENT 线程的 add/drop/move 结构性修改撕裂（P2.4-review 竞态项）。
+            String snapshotText;
             synchronized (this) {
                 writePending = false;
                 snapshot();
-                toSave = root;
+                snapshotText = top.syshub.accountsx.common.utils.NetworkUtils.GSON.toJson(root.raw());
             }
             try {
-                store.save(toSave);
+                store.saveSnapshot(snapshotText);
             } catch (IOException e) {
                 LOGGER.error("账号配置保存失败（内存状态不受影响，下次变更触发重试）。", e);
             }
@@ -274,24 +270,15 @@ public final class AccountRepository {
         return e instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
     }
 
-    private static boolean sameEntry(JsonElement element, BaseAccount account) {
-        if (!(element instanceof JsonObject jo))
-            return false;
-        String type = str(jo.get("type"));
-        if (type == null || !type.equals(configIdOf(account.getAccountType())))
-            return false;
-        JsonObject profile = jo.get("profile") instanceof JsonObject p ? p : null;
-        UUID want = account.getAccountStorage().getPlayerUUID();
-        if (profile == null || want == null)
-            return profile == null && want == null && type.equals("offline");
-        return want.toString().replace("-", "").equalsIgnoreCase(str(profile.get("uuid")));
-    }
-
     /**
      * v4 JSON → 旧对象（登录/刷新/UI 复用整条旧链路，P3 再换模型）。
-     * 未知 type 返回 null（条目保留在 root.accounts() 里，不删除）。
+     * 未知 type 返回 null；snapshot() 会把这类条目原样带回，不删除。
      */
     static BaseAccount fromJson(JsonObject jo) {
+        return fromJson(jo, null);
+    }
+
+    static BaseAccount fromJson(JsonObject jo, JsonArray servers) {
         String type = str(jo.get("type"));
         // v4 用短 kind（yggdrasil / united），旧链路用 configId：两边都认
         AccountType accountType = type == null ? null : byConfigId(type);
@@ -307,7 +294,9 @@ public final class AccountRepository {
         String avatarKey = str(jo.get("avatarKey"));
 
         String server = str(jo.get("server"));
-        JsonObject envelope = oauthEnvelope(credentials);
+        // 3→4 把 tokenEndpoint/clientId 种在 servers[].oauth，账号 credentials 里没有——
+        // 按 server 反查服务器条目补全，还原旧链路的 "OAuth {…}" 信封（字段错配见 P2.4-review a1）。
+        JsonObject envelope = oauthEnvelope(credentials, server, servers);
         return switch (accountType) {
             case OFFLINE -> new OfflineAccount(accessToken, name, uuid);
             case MICROSOFT -> new MicrosoftAccount(accessToken, name, uuid, null, str(credentials.get("refreshToken")), avatarKey, 0L);
@@ -327,20 +316,35 @@ public final class AccountRepository {
 
     private static AccountType byConfigId(String configId) {
         for (AccountType t : AccountType.CONFIGURABLE_VALUES) {
-            if (configId.equals(configIdOf(t)))
+            if (configId.equals(t.getId()))
                 return t;
         }
         return null;
     }
 
     /** v4 的结构化 OAuth 还原为旧链路信封（P3 换掉 provider 链路后删除）。 */
-    private static JsonObject oauthEnvelope(JsonObject credentials) {
+    private static JsonObject oauthEnvelope(JsonObject credentials, String server, JsonArray servers) {
         if (credentials == null || !"true".equals(String.valueOf(credentials.get("oauth"))))
             return null;
-        String endpoint = str(credentials.get("tokenEndpoint"));
         String refresh = str(credentials.get("refreshToken"));
+        if (refresh == null)
+            return null;
+        // endpoint/clientId 优先读账号字段（仓储自己写出的形状），缺失则按 server 反查 servers[]（3→4 种的位置）
+        String endpoint = str(credentials.get("tokenEndpoint"));
         String clientId = str(credentials.get("clientId"));
-        if (endpoint == null || refresh == null || clientId == null)
+        if ((endpoint == null || clientId == null) && server != null && servers != null) {
+            for (JsonElement element : servers) {
+                if (element instanceof JsonObject so
+                        && server.equals(str(so.get("apiRoot")))
+                        && so.get("oauth") instanceof JsonObject oauth) {
+                    if (endpoint == null)
+                        endpoint = str(oauth.get("tokenEndpoint"));
+                    if (clientId == null)
+                        clientId = str(oauth.get("clientId"));
+                }
+            }
+        }
+        if (endpoint == null || clientId == null)
             return null;
         JsonObject envelope = new JsonObject();
         envelope.addProperty("token_endpoint", endpoint);
@@ -369,17 +373,6 @@ public final class AccountRepository {
         };
     }
 
-    /** configId 持久化契约：枚举第三个构造参数（见 AGENTS.md 硬性不变量）。 */
-    private static String configIdOf(AccountType type) {
-        return switch (type) {
-            case ENV_DEFAULT -> null;
-            case OFFLINE -> "offline";
-            case MICROSOFT -> "microsoft";
-            case AUTHLIB_INJECTOR -> "injector.authlib-injector";
-            case UNITED_INJECTOR -> "injector.united";
-        };
-    }
-
     private static UUID parseUuid(String raw) {
         if (raw == null)
             return null;
@@ -392,20 +385,12 @@ public final class AccountRepository {
     }
 
     /**
-     * 旧对象 → v4 JSON。OAuth 信封在 v4 侧是结构化字段，这里把它还原回去
-     * （{@code loginToken = "OAuth {…}"}），让旧刷新链路无缝工作；
-     * P3 换掉 provider 链路后这段还原逻辑随之删除。
+     * 旧对象 → v4 JSON。v4 type 用短 kind（{@link AccountType#getKind}）；
+     * 旧链路读回时 fromJson 对 configId 与 kind 双认，跨版本文件可读。
      */
     static JsonObject toJson(BaseAccount account) {
         JsonObject jo = new JsonObject();
-        // v4 用短 kind；旧链路读回时 fromJson 两边都认
-        String kind = switch (account.getAccountType()) {
-            case AUTHLIB_INJECTOR -> "yggdrasil";
-            case UNITED_INJECTOR -> "united";
-            case OFFLINE -> "offline";
-            case MICROSOFT -> "microsoft";
-            case ENV_DEFAULT -> null;
-        };
+        String kind = account.getAccountType().getKind();
         if (kind == null)
             throw new IllegalArgumentException("环境账号不落盘: " + account);
         jo.addProperty("type", kind);
@@ -473,5 +458,10 @@ public final class AccountRepository {
 
     synchronized boolean isWritePending() {
         return writePending;
+    }
+
+    /** 测试用：同步触发一次合并写（生产路径只经 add/drop/move/touch 标脏）。 */
+    void markDirtyForTest() {
+        markDirty();
     }
 }
