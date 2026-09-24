@@ -40,17 +40,16 @@ MC 26.1+ 是非混淆版本（无 ProGuard），Loom 没有 `remapJar` 任务，
 
 ## 硬性不变量
 
-| 不变量                                                                                                                                                     | 为什么                                                                                                                                                                                                 | 违反后的症状                                                            | 强制机制                                                                                                    |
-|------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
-| common 不得 import `net/minecraft/*` 或 `com/mojang/authlib/*`；`java/awt/*`、`javax/imageio/*` 已加入白名单（头像渲染位于 `common/utils/image` 包，允许） | common 被 13 个不同 MC 版本共用编译；AWT 头像渲染已迁回 common 的 `utils/image` 包（曾迁出到独立 `:core-image` 模块，P1.4 / 决策 D4），AWT 在 common 内白名单放行                                      | 编译失败（`checkArchitecture` 拒绝 net/minecraft / com/mojang/authlib） | `:checkArchitecture`（P0.5：net/minecraft、com/mojang/authlib 硬性禁止；java.awt/javax.imageio 白名单放行） |
-| `MinecraftAdapterImpl` 类名是数据契约                                                                                                                      | 写在各适配器 `fabric.mod.json` 的 `accountsx:adapter.mc.class` 里                                                                                                                                      | 13 个适配器中找不到实现，模组崩溃                                       | 人工校验 + fabric.mod.json 校验                                                                             |
-| `~/.accountsx/` 下的文件含明文 token                                                                                                                       | 所有日志、报错、提交都不得包含其内容                                                                                                                                                                   | token 泄露                                                              | 人工 review                                                                                                 |
-| `depends.minecraft` 使用 `>=` 无上界                                                                                                                       | Loader 在候选中取版本号最大者；适配器版本为 `${minecraft}-${version}`，MC 版本是最左的版本核心段（数字逐位比较，短者补 0），而 CI 注入的 `+build.N` 落在被忽略的 build 段，不会破坏排序                | 版本排序被破坏时选错适配器 → mixin 目标不存在 → 崩溃                    | `:validateAdapterMatrix`（P0.5）                                                                            |
-| 载荷读失败时**不得**写回配置                                                                                                                               | `initialize()` 末尾的无条件 `save()` 会把文件覆写成 `[]`，静默丢失用户全部账号                                                                                                                         | 一次瞬时 I/O 错误永久删除所有账号                                       | P2.2 `JsonConfigStore` 只读降级（`7341005`，P2.4 接线后全面生效）                                                                                     |
-| 实例配置里的 `id` 是载荷文件的索引；账号数据在 `~/.accountsx/<id>.json`                                                                                    | 实例目录可能被同步、打包、提交，明文 token 不宜放其中                                                                                                                                                  | 混淆配置与载荷的职责                                                    | 人工理解                                                                                                    |
-| 26.1+ 使用 `fabric-loom`（非 `fabric-loom-remap`）                                                                                                         | 非混淆版本没有 `remapJar` 任务                                                                                                                                                                         | 构建失败                                                                | `adapters.toml` 的 `obfuscated` + 插件断言                                                                  |
-| `configId`（`AccountType` 枚举的第三个参数）是持久化契约                                                                                                   | 写入 `accounts.json`，迁移时按此识别类型                                                                                                                                                               | 未知 type 导致整个账号集加载失败                                        | `ConfigVersion.RENAME_ACCOUNT_TYPE`                                                                         |
-| i18n key 格式 `accountsx.account.type.<type 名小写>.name` / `.using`                                                                                       | `Translator` 通过拼接 `AccountType.name().toLowerCase()` 生成 key（多数类型与 `configId` 相同，但 `AUTHLIB_INJECTOR` 的 enum name 是 `authlib_injector` 而 `configId` 是 `injector.authlib-injector`） | 缺译 key 显示原始 key 名                                                | `:test`（P0.4）                                                                                             |
+| 不变量                                                                                                                                                     | 为什么                                                                                                                                                                                                 | 违反后的症状                                                                        | 强制机制                                                                                                            |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| common 不得 import `net/minecraft/*` 或 `com/mojang/authlib/*`；`java/awt/*`、`javax/imageio/*` 已加入白名单（头像渲染位于 `common/utils/image` 包，允许） | common 被 13 个不同 MC 版本共用编译；头像渲染位于 common 的 `utils/image` 包，AWT 在 common 内白名单放行                                      | 编译失败（`checkArchitecture` 拒绝 net/minecraft / com/mojang/authlib）             | `:checkArchitecture`：net/minecraft、com/mojang/authlib 硬性禁止；java.awt/javax.imageio 白名单放行         |
+| `MinecraftAdapterImpl` 类名是数据契约                                                                                                                      | 写在各适配器 `fabric.mod.json` 的 `accountsx:adapter.mc.class` 里                                                                                                                                      | 13 个适配器中找不到实现，模组崩溃                                                   | 人工校验 + fabric.mod.json 校验                                                                                     |
+| 账号配置文件含明文 token                                                                                                                       | 所有日志、报错、提交都不得包含其内容                                                                                                                                                                   | token 泄露                                                                          | 人工 review                                                                                                         |
+| `depends.minecraft` 使用 `>=` 无上界                                                                                                                       | Loader 在候选中取版本号最大者；适配器版本为 `${minecraft}-${version}`，MC 版本是最左的版本核心段（数字逐位比较，短者补 0），而 CI 注入的 `+build.N` 落在被忽略的 build 段，不会破坏排序                | 版本排序被破坏时选错适配器 → mixin 目标不存在 → 崩溃                                | `:validateAdapterMatrix`                                                                                    |
+| 读取失败时**不得**写回配置                                                                                                                               | 读取失败后若仍执行写入，会静默丢失用户全部账号                                                                                                                         | 一次瞬时 I/O 错误永久删除所有账号                                                   | `JsonConfigStore` 只读降级                                                   |
+| 26.1+ 使用 `fabric-loom`（非 `fabric-loom-remap`）                                                                                                         | 非混淆版本没有 `remapJar` 任务                                                                                                                                                                         | 构建失败                                                                            | `adapters.toml` 的 `obfuscated` + 插件断言                                                                          |
+| `configId`（`AccountType.getId()`，枚举第三个构造参数）是持久化契约                                                                                        | 写入全局 `accounts` 数组的 `type`（v4 用短 kind，经 `getKind()`；读回对 configId/kind 双认），迁移时按此识别类型                                                                                       | 未知 type 的账号条目在 `snapshot()` 写回时原样保留（跳过但不删除） | `AccountRepository.fromJson` 返回 null + `snapshot()` 带回 |
+| i18n key 格式 `accountsx.account.type.<type 名小写>.name` / `.using`                                                                                       | `Translator` 通过拼接 `AccountType.name().toLowerCase()` 生成 key（多数类型与 `configId` 相同，但 `AUTHLIB_INJECTOR` 的 enum name 是 `authlib_injector` 而 `configId` 是 `injector.authlib-injector`） | 缺译 key 显示原始 key 名                                                            | `:test`                                                                                                     |
 
 ## 项目布局
 
@@ -73,15 +72,13 @@ AccountsX（根项目 / common）
 │   │   │   ├── Adapters.java            # @Deprecated 转发壳（兼容旧适配器）
 │   │   │   └── Platforms.java           # 反射加载适配器实现（memoize）
 │   │   ├── manager/
-│   │   │   ├── AccountManager.java      # 编排（刷新/登录；P2.4 起集合与持久化走 AccountRepository）
-│   │   │   ├── AccountRepository.java   # P2.4 账号仓储（集合+current+标脏合并写+首启动触发迁移）
-│   │   │   ├── AccountWorker.java       # @Deprecated 转发到 TaskScheduler（兼容旧适配器）；register/unregister 已删除
-│   │   │   └── config/
-│   │   │       └── （P2.4 删除 `ConfigHandle` / `ConfigVersion`，由 `AccountRepository` + `storage/` 接管）
-│   │   ├── storage/                     # P2.2 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore，P2.4 已接线）
-│   │   │   └── migration/               # Migration / MigrationChain 接缝 + 四跳实现 + StandardMigrations（P2.3 `89b9f5e`，P2.4 已接线）
+│   │   │   ├── AccountManager.java      # 编排（刷新/登录；集合与持久化走 AccountRepository）
+│   │   │   ├── AccountRepository.java   # 账号仓储（集合+current+标脏合并写；启动时可触发配置迁移）
+│   │   │   └── AccountWorker.java       # @Deprecated 转发到 TaskScheduler（兼容旧适配器）
+│   │   ├── storage/                     # 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore）
+│   │   │   └── migration/               # Migration / MigrationChain + 标准迁移链（0→1→2→3→4，含 UNIFY_AND_DECOUPLE）
 │   │   ├── ui/                          # 版本无关的 UIScreen / Memory / Translator
-│   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层，P1.3）
+│   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
 │   │       └── image/                  # 头像渲染+落盘（AvatarRenderer / AwtAvatarRenderer / AvatarCache；AWT/ImageIO 在 common 内白名单放行）
 ├── adapters/
@@ -106,7 +103,7 @@ AccountsX（根项目 / common）
 | `accountsx-adapter-authlib` | `accountsx:adapter.authlib` → `{ "class": "..." }` | `AuthlibBridge`     |
 | `accountsx-adapter-mc`      | `accountsx:adapter.mc` → `{ "class": "..." }`      | `MinecraftPlatform` |
 
-`Platforms`（`common/adapters/Platforms.java`）通过反射加载两者，使用 `Suppliers.memoize` 缓存，并断言它们共享相同的 `AccountSession` 类型参数。始终通过 `Platforms.getMinecraftPlatform()` / `Platforms.authlibBridge()` 访问，不要直接引用 MC/authlib 类型。旧的 `Adapters` 类保留为 `@Deprecated` 转发壳，适配器不需改动。
+`Platforms`（`common/adapters/Platforms.java`）通过反射加载两者，使用 `Suppliers.memoize` 缓存，并断言它们共享相同的 `AccountSession` 类型参数。始终通过 `Platforms.getMinecraftPlatform()` / `Platforms.authlibBridge()` 访问，不要直接引用 MC/authlib 类型。`Adapters` 类保留为 `@Deprecated` 转发壳，适配器不需改动。
 
 Common `fabric.mod.json` 依赖两个适配器 mod id（`accountsx-adapter-mc`、`accountsx-adapter-authlib`），并注册 MethodHandles lookup accessor 到 `accountsx:impl-lookup-accessor` 供 `UnsafeVM` 使用。
 
@@ -130,20 +127,20 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 ### 运行时流程
 
 1. `AccountsX.onInitializeClient` → `AccountManager.initialize` + `MicrosoftConstants.initialize`
-2. Manager 用环境账号 + `AccountRepository`（新存储 `load()` + 首启动旧配置迁移）在 worker 上刷新非授权账号
+2. Manager 用环境账号 + `AccountRepository` 加载账号列表，在 worker 上刷新非授权账号
 3. UI（各 MC 版本的 `AccountScreen`）在**客户端线程**上修改账号
-4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度，不再用全局注册表登记 worker 线程
+4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
 
 `@Threading.Thread` 文档标注预期线程；`Threading.checkMinecraftClientThread()` / `checkAccountWorkerThread()` 强制执行。不要在 worker 线程外调用 profile 修改 API。
 
 ### 持久化
 
-- 实例配置：`<game>/config/accountsx/accounts.json` — version + UUID `id`
-- 账号载荷：`~/.accountsx/<id>.json`（用户主目录，跨实例共享）
-- 迁移：`ConfigVersion` 在 version 较旧时就地升级 JSON
+- 配置文件：`~/.config/accountsx.json`（v4：`version` / `servers` / `accounts`；可用 `ACCOUNTSX_CONFIG` 覆盖，`$XDG_CONFIG_HOME` 次之）。
+- `JsonConfigStore` 原子写；读取或迁移失败时备份并进入只读降级，保存被丢弃。
+- 旧版本按 `StandardMigrations` 链升级并回写；未知账号条目跳过但保留。
 - `ENV_DEFAULT` 账号不写入磁盘
-- `common/storage/JsonConfigStore`（全局单文件 `~/.config/accountsx.json`，v4 schema，含只读降级保护）+ 标准迁移链（0→1→2→3→4，含方案 C 的 `UNIFY_AND_DECOUPLE`），P2.4 起由 `manager/AccountRepository` 接线：`AccountManager.initialize` 构造默认存储并触发首启动旧配置迁移；旧双文件结构（`ConfigHandle`/`ConfigVersion`）已删除（见 `REFACTORING/03-roadmap.md`）
+- 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
 
 ### MC 适配器（`adapters/mc/<version>`）
 
@@ -153,7 +150,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - `ui/` — `AccountScreen`、列表控件、`UIScreenImpl` / `DefaultMemory` 桥接 common `UIScreen`/`Memory`
 - `mixins/` — 标题屏按钮、session/skin accessor、Yggdrasil hook；多数版本嵌套在 `mixins/mixins/` 下（1.20 较扁平）
 
-GUI 资源（切换图标 `account.png`、标题屏精灵 `icon/account`、默认头像 `alex_avatar.png`）统一放在 common 的 `assets/accountsx/textures/gui/` 下，**各 MC 适配器不再携带副本**。`TitleScreenMixin` 的精灵 `ResourceLocation` 用 `MOD_ID`（`accountsx`）而非 `MC_ADAPTER_ID`，由 common 提供纹理；新增 MC 版本时无需复制这些资源。Mod Menu 集成（配置入口 + 图标）由 mc 适配器通过 `fabric.mod.json` 的 `custom.modmenu.parent` 提供，不再有独立的 `accountsx-adapter-modmenu` 适配器。
+GUI 资源（切换图标 `account.png`、标题屏精灵 `icon/account`、默认头像 `alex_avatar.png`）统一放在 common 的 `assets/accountsx/textures/gui/` 下。`TitleScreenMixin` 的精灵 `ResourceLocation` 用 `MOD_ID`（`accountsx`）而非 `MC_ADAPTER_ID`，由 common 提供纹理；新增 MC 版本时无需复制这些资源。Mod Menu 集成（配置入口 + 图标）由 mc 适配器通过 `fabric.mod.json` 的 `custom.modmenu.parent` 提供，不再有独立的 `accountsx-adapter-modmenu` 适配器。
 
 MC/loader/API/authlib/java 版本由 `gradle/adapters.toml` 的 `[[mc]]` 条目按目录名（= MC 版本）提供，适配器自己的 `build.gradle.kts` 只应用 Loom 插件 + `accountsx.mc.adapter`，没有 `adapter { }` 块。Mojang official mappings 由 `accountsx.mc.adapter` 集中添加（通过反射访问 Loom 的 `loom` 扩展，因为 Loom 类不在 buildSrc classpath 上）。
 
@@ -163,9 +160,9 @@ MC/loader/API/authlib/java 版本由 `gradle/adapters.toml` 的 `[[mc]]` 条目�
 
 ### Mod Menu 集成
 
-不再有独立的 modmenu 适配器。Mod Menu 的「配置入口」由各 mc 适配器 `fabric.mod.json` 的 `custom.modmenu.parent`（指向 `accountsx`）提供，UI 复用 mc 适配器的 `AccountScreen`。Mod Menu 本体（com.terraformersmc:modmenu）仍作为 mc 适配器（obfuscated 分支）的 `modImplementation` 依赖，版本声明在 `gradle/adapters.toml` 每个 `[[mc]]` 的 `modmenu` 字段里。
+Mod Menu 的「配置入口」由各 mc 适配器 `fabric.mod.json` 的 `custom.modmenu.parent`（指向 `accountsx`）提供，UI 复用 mc 适配器的 `AccountScreen`。Mod Menu 本体（com.terraformersmc:modmenu）作为 mc 适配器（obfuscated 分支）的 `modImplementation` 依赖，版本声明在 `gradle/adapters.toml` 每个 `[[mc]]` 的 `modmenu` 字段里。
 
-### 构建期单一数据源（P0.2）
+### 构建期单一数据源
 
 | 文件                        | 内容                                                                                                                                  | 消费者                                                                                                                                                                                                                                                                                 |
 |-----------------------------|---------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -255,34 +252,31 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 2. **Provider 实现**（`common/accounts/impl/`）— 实现 `AccountProvider<T>` 的 `configure` / `validate` / `login` / `refresh` / `createAccountContext`
 3. **账号模型**（`BaseAccount` 子类）— 定义账号数据结构，注册 Gson TypeAdapter（若需要自定义序列化）
 4. **i18n key**（`en_us.json` + `zh_cn.json`）— 添加 `accountsx.account.type.<type 名小写>.name` 和 `.using`（注意是 enum name 小写，不是 configId）
-5. **配置迁移**（`storage/migration/` 新增一跳，注册进 `StandardMigrations`）— 如果 configId 是新增的，确保旧配置中的未知 type 不会导致整个加载失败
+5. **配置迁移**（`storage/migration/` 新增一跳，注册进 `StandardMigrations`）— 如果 configId/kind 是新增的，确保旧配置中的未知 type 不会导致整个加载失败（`AccountType` 加枚举值时同步加 `kind`；仓储 `byKind` 加分支，`toJson` 无需改——走 `getKind()`）
 6. **适配器 UI**（各 `adapters/mc/<ver>/ui/AccountScreen.java`）— 确保 `configure()` / `validate()` 在 `UIScreen` SPI 下工作
 
 ### 改配置格式
 
 - 必须加 `storage/migration` 迁移跳 + 迁移测试
 - 迁移后回写 version 并更新 `CURRENT_VERSION`
-- 详见 `docs/config-schema.md`（P2 阶段产出）
 
 ### 改 UI
 
 - 先判断改动是否版本无关
-- 版本无关改动改 `mc-shared`（P5 阶段产出），需全矩阵编译
+- 版本无关改动需全矩阵编译
 - 版本相关改动改对应 `adapters/mc/<ver>/ui/`
 
 ## 安全约束
 
-- `~/.accountsx/` 下的文件含明文 token，**任何日志、报错、提交都不得包含其内容**
+- 账号配置文件（含 `~/.config/accountsx.json`、`~/.accountsx/`）含明文 token，**任何日志、报错、提交都不得包含其内容**
 - 不得在代码里硬编码真实 client_id 之外的凭据
 - 测试 fixture 一律使用 `fake-` 前缀
-- 不要提交 `~/.accountsx/` 或任何含 token 的文件
+- 不要提交 `~/.config/accountsx.json`、`~/.accountsx/` 或任何含 token 的文件
 
 ## 代码风格
 
 - Java 17、UTF-8、4 空格缩进
 - 注释解释「为什么」而非「做什么」
-- 历史拼写错误保留以维持兼容性：
-  - `getAuthlibAdpater()`（应为 `getAuthlibAdapter()`）— 纯 Java 符号，旧适配器仍引用；`Platforms` 已用正确方法名 `authlibBridge()`
 - `AccountProvider.validate` 返回 `int` 常量（`STATE_IMMEDIATE_CLOSE=0` / `STATE_HANDLE=1`），而非枚举
 - 非空不变量不要用 `assert x != null` 表达（静态分析无法据此推断回调线程/按钮 `OnPress` 中的引用安全，也无法满足 `@NotNull` 形参）；统一改为捕获到 `final` 局部变量后显式判空并 `return`
 
