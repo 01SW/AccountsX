@@ -26,7 +26,33 @@ public final class ConfigHandle {
 
     private static String id;
 
+    /**
+     * 只读降级标志：为 true 时 {@link #write()} 直接放弃写盘。
+     *
+     * <p>不变量（AGENTS.md）：载荷读失败时**不得**写回配置。原实现里 {@code load()} 把任何
+     * {@code Throwable} 都吞成空列表，而 {@code id} 早已赋值、{@code AccountManager.initialize()}
+     * 又无条件 {@code save()}，于是 {@code ~/.accountsx/<id>.json} 会被覆写成 {@code []}——
+     * 一次瞬时 I/O 错误，或**一个**账号带未知 {@code type}（{@code AccountTypeAdapter.read}
+     * 抛 IOException 会让整个列表反序列化失败），就会静默删除用户全部账号。</p>
+     *
+     * <p>降级后本次会话的账号列表可能不完整，但磁盘数据保持原样，用户下次启动仍有完整账号。</p>
+     */
+    private static volatile boolean readOnly;
+
     private static final String CONFIG_LOCATION = "accountsx/accounts.json";
+
+    /** 进入只读降级：本次会话不再写盘，避免用读到的（可能为空的）状态覆盖用户数据。 */
+    static void enterReadOnlyMode(String reason) {
+        if (!readOnly) {
+            readOnly = true;
+            AccountsX.LOGGER.error("AccountsX 账户数据读取失败，已进入只读降级模式，本次会话不会写回配置（{}）。", reason);
+        }
+    }
+
+    /** 供测试与诊断：当前是否处于只读降级模式。 */
+    public static boolean isReadOnly() {
+        return readOnly;
+    }
 
     /**
      * 实例配置的序列化载体：仅含 version 与 id，由 Gson 通过 record 访问器反射读写。
@@ -78,24 +104,38 @@ public final class ConfigHandle {
                         }
                     }
 
-                    id = jo.get("id").getAsString();
+                    String parsedId = jo.get("id").getAsString();
                     try {
-                        UUID.fromString(id);
+                        UUID.fromString(parsedId);
                     } catch (Exception e) {
-                        id = UUID.randomUUID().toString();
+                        // id 非法意味着无法定位载荷文件：这属于读失败，不能当作「没有账号」处理。
+                        throw new IllegalStateException("Illegal account payload id: " + parsedId, e);
                     }
-                    return getAccounts();
+
+                    // 先完整读出载荷，成功后才把 id 落地 —— 否则读失败后 id 仍然有效，
+                    // 紧接着的 save() 就会把该 id 对应的载荷文件覆写成空列表。
+                    List<? extends BaseAccount> loaded = getAccounts();
+                    id = parsedId;
+                    return loaded;
                 }
             }
 
             throw new IllegalStateException("Illegal config.");
         } catch (Throwable t) {
+            // 只读降级：宁可不写，也不能用读失败得到的空状态覆盖用户数据。
             AccountsX.LOGGER.warn("Cannot load the config file.", t);
+            enterReadOnlyMode(String.valueOf(t));
             return List.of();
         }
     }
 
     public static void write() throws IOException {
+        if (readOnly) {
+            // 读失败后禁止写回：否则会用不完整/空的账号列表覆盖用户数据（见 readOnly 的注释）。
+            AccountsX.LOGGER.warn("AccountsX is in read-only mode; skipping the config write.");
+            return;
+        }
+
         Path configFile = FabricLoader.getInstance().getConfigDir().resolve(CONFIG_LOCATION);
 
         List<BaseAccount> accounts = new ArrayList<>();
@@ -124,10 +164,15 @@ public final class ConfigHandle {
                 return List.of();
 
             try (Reader reader = Files.newBufferedReader(accountsFile, StandardCharsets.UTF_8)) {
-                return NetworkUtils.GSON.fromJson(
+                List<? extends BaseAccount> accounts = NetworkUtils.GSON.fromJson(
                         reader,
                         new TypeToken<List<? extends BaseAccount>>() {}.getType()
                 );
+                if (accounts == null) {
+                    // 空文件 / JSON null：解析成功但没有内容，仍按「无账号」处理。
+                    return List.of();
+                }
+                return accounts;
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to load accounts file", e);
