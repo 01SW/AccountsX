@@ -1,4 +1,5 @@
 {
+  "accountsx.account.fail.injector_invalid_token": "This external login account's credentials are no longer valid. Please delete it and add it again.",
   "accountsx.account.fail.player_no_longer_existed": "Cannot find a matched player!",
   "accountsx.account.fail.title": "Account Operation Failed",
   "accountsx.account.fail.unknown": "Unknown exceptions have occurred. Please check the logs or seek help.",

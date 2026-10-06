@@ -16,9 +16,15 @@ import java.net.URI;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
+import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.*;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Map;
+import java.util.UUID;
 
 public abstract class AbstractInjectorAccountProvider<T extends AbstractInjectorAccount> implements AccountProvider<T> {
     private static final String GUID_SERVER_BASE = "guid:as.login.injector.widgets.server_url";
@@ -34,6 +40,13 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
 
     protected final HttpGateway http;
 
+    /**
+     * 生成 clientToken 用。drasl 自己用 {@code RandomHex(16)} 生成 32 个十六进制字符
+     * （drasl {@code util.go}），Yggdrasil 规范也把 clientToken 限制在 32 字符以内，
+     * 因此这里采用相同形状，避免只对 drasl 有效。
+     */
+    private static final SecureRandom CLIENT_TOKEN_RANDOM = new SecureRandom();
+
     protected AbstractInjectorAccountProvider(String serverBaseTranslationKey, String userBaseTranslationKey, String accountContextName, HttpGateway http) {
         this.serverBaseTranslationKey = serverBaseTranslationKey;
         this.accountContextName = accountContextName;
@@ -45,7 +58,48 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
 
     protected abstract String transformServerBaseURL(String server);
 
-    protected abstract T createAccount(String accessToken, String playerName, UUID playerUUID, String server, String preferredPlayerUUID, String accountName, String avatarKey, long avatarCachedAt);
+    protected abstract T createAccount(String accessToken, String playerName, UUID playerUUID, String server, String preferredPlayerUUID, String accountName, String avatarKey, long avatarCachedAt, String clientToken);
+
+    /** 生成一个 32 字符十六进制 clientToken。 */
+    private static String generateClientToken() {
+        byte[] bytes = new byte[16];
+        CLIENT_TOKEN_RANDOM.nextBytes(bytes);
+        return HexFormat.of().formatHex(bytes);
+    }
+
+    /**
+     * 统一把服务端的 Yggdrasil 错误响应转成 {@link InjectorAuthException}。
+     * 注意只暴露服务端返回的 error / errorMessage，绝不带上任何令牌。
+     */
+    private static void throwIfError(JsonObject json) throws InjectorAuthException {
+        if (!json.has("error")) {
+            return;
+        }
+
+        JsonElement errorMessage = json.get("errorMessage");
+        String detail = errorMessage != null && errorMessage.isJsonPrimitive() ? errorMessage.getAsString() : "";
+        throw new InjectorAuthException(
+                "accountsx.account.fail.injector_invalid_token",
+                "Cannot auth this injector: " + json.get("error").getAsString() + (detail.isEmpty() ? "" : " - " + detail)
+        );
+    }
+
+    /**
+     * 取服务端回显的 clientToken；缺省或为空时返回 {@code fallback}。
+     *
+     * <p>drasl 会把请求里的 clientToken 原样回显（{@code auth.go:271/393}），以服务端值为准
+     * 可以对齐第三方实现可能做的规范化（例如补全/截断），避免下次刷新比对不上。</p>
+     */
+    private static String echoedClientToken(JsonObject json, String fallback) {
+        JsonElement echoed = json.get("clientToken");
+        if (echoed != null && echoed.isJsonPrimitive() && echoed.getAsJsonPrimitive().isString()) {
+            String value = echoed.getAsString();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return fallback;
+    }
 
     @Override
     public final AccountContext createAccountContext(T account) throws IOException {
@@ -130,6 +184,11 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         String loginUrl = baseUrl + "/authserver/authenticate";
         String profileUrl = baseUrl + "/sessionserver/session/minecraft/profile/";
 
+        // 主动提供 clientToken：服务端会把它存进该 client 并在 /authserver/refresh 强制比对。
+        // 若省略，drasl 会为每次登录随机生成一个（auth.go:179-192），客户端一旦丢弃，
+        // 之后的刷新必然 403 Invalid token —— 账号就变成「只有第一次能用」。
+        String clientToken = generateClientToken();
+
         JsonObject agent = new JsonObject();
         agent.addProperty("name", "Minecraft");
         agent.addProperty("version", 1);
@@ -138,13 +197,13 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         root.add("agent", agent);
         root.addProperty("username", memory.get(GUID_USER_NAME, String.class));
         root.addProperty("password", memory.get(GUID_PASSWORD, String.class));
+        root.addProperty("clientToken", clientToken);
 
         JsonObject json = http.postJson(loginUrl, root);
-        if (json.has("error")) {
-            throw new IOException("Cannot auth this injector: " + json.get("errorMessage").getAsString());
-        }
+        throwIfError(json);
 
         String accessToken = json.get("accessToken").getAsString();
+        clientToken = echoedClientToken(json, clientToken);
 
         String playerName = memory.get(GUID_PLAYER_NAME, String.class);
         List<Profile> profiles = readProfiles(json);
@@ -165,7 +224,8 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                     profile.playerUUID,
                     getAccountName(baseUrl),
                     avatar == null ? null : avatar.key(),
-                    avatar == null ? 0L : avatar.cachedAt()
+                    avatar == null ? 0L : avatar.cachedAt(),
+                    clientToken
             );
         } else {
             for (Profile profile : profiles) {
@@ -179,7 +239,8 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                             profile.playerUUID,
                             getAccountName(baseUrl),
                             avatar == null ? null : avatar.key(),
-                            avatar == null ? 0L : avatar.cachedAt()
+                            avatar == null ? 0L : avatar.cachedAt(),
+                            clientToken
                     );
                 }
             }
@@ -198,15 +259,29 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         String refreshUrl = baseUrl + "/authserver/refresh";
         String profileUrl = baseUrl + "/sessionserver/session/minecraft/profile/";
 
-        JsonObject root = new JsonObject();
-        root.addProperty("accessToken", account.getLoginToken());
-
-        JsonObject json = http.postJson(refreshUrl, root);
-        if (json.has("error")) {
-            throw new IOException("Cannot auth this injector: " + json.get("errorMessage").getAsString());
+        String clientToken = account.getClientToken();
+        if (clientToken == null || clientToken.isEmpty()) {
+            // 旧版本（2.0.0-beta.3 及更早）登录时未保存 clientToken，且当时也没有保存密码，
+            // 无法凭现有载荷补出能通过服务端比对的值；只能让用户重新添加该账号。
+            throw new InjectorAuthException(
+                    "accountsx.account.fail.injector_invalid_token",
+                    "This injector account has no clientToken (created by an older version); add it again."
+            );
         }
 
+        JsonObject root = new JsonObject();
+        root.addProperty("accessToken", account.getLoginToken());
+        root.addProperty("clientToken", clientToken);
+
+        JsonObject json = http.postJson(refreshUrl, root);
+        throwIfError(json);
+
         String accessToken = json.get("accessToken").getAsString();
+
+        String echoed = echoedClientToken(json, clientToken);
+        if (!echoed.equals(clientToken)) {
+            account.setClientToken(echoed);
+        }
 
         List<Profile> profiles = readProfiles(json);
         if (profiles.size() == 1) {
@@ -365,7 +440,9 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                 profile.playerUUID,
                 getAccountName(yggUrl),
                 avatar == null ? null : avatar.key(),
-                avatar == null ? 0L : avatar.cachedAt()
+                avatar == null ? 0L : avatar.cachedAt(),
+                // OAuth 账号走 OAuth 刷新端点，不使用 Yggdrasil clientToken。
+                null
         );
         account.setLoginProfile("OAuth " + OAuth, profile.playerUUID);
         return account;

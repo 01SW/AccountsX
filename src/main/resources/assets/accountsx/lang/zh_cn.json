@@ -1,4 +1,5 @@
 {
+  "accountsx.account.fail.injector_invalid_token": "该外置登录账号的凭据已失效，请删除后重新添加该账号。",
   "accountsx.account.fail.player_no_longer_existed": "未能查找到匹配的玩家！",
   "accountsx.account.fail.title": "账户操作失败",
   "accountsx.account.fail.unknown": "未知错误。请查看日志，或询问社区帮助",
