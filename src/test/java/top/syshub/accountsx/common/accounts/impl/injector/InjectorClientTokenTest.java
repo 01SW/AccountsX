@@ -2,6 +2,7 @@ package top.syshub.accountsx.common.accounts.impl.injector;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
@@ -12,6 +13,7 @@ import top.syshub.accountsx.common.ui.Memory;
 import top.syshub.accountsx.common.utils.NetworkUtils;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -47,7 +50,7 @@ class InjectorClientTokenTest {
 
     /** 记录每次请求、按 URL 返回预置响应的假网关。 */
     private static final class ScriptedHttpGateway implements HttpGateway {
-        private record Call(String method, String url, JsonElement body) {}
+        private record Call(String method, String url, JsonElement body, boolean ignoredHttpStatus) {}
 
         private final List<Call> calls = new ArrayList<>();
 
@@ -62,6 +65,13 @@ class InjectorClientTokenTest {
             List<Call> matched = callsTo(url);
             assertThat(matched).as("no request recorded for %s", url).isNotEmpty();
             return matched.get(matched.size() - 1).body().getAsJsonObject();
+        }
+
+        /** 最近一次发往该 URL 的 POST 是否忽略了 HTTP 状态码（决定能否读到错误体）。 */
+        boolean lastPostIgnoredStatus(String url) {
+            List<Call> matched = callsTo(url);
+            assertThat(matched).as("no request recorded for %s", url).isNotEmpty();
+            return matched.get(matched.size() - 1).ignoredHttpStatus();
         }
 
         /** drasl 的 meta：只有 serverName，没有 openid_configuration_url（drasl 不支持 OAuth 设备码）。 */
@@ -106,7 +116,7 @@ class InjectorClientTokenTest {
 
         @Override
         public JsonObject get(String url) {
-            calls.add(new Call("GET", url, null));
+            calls.add(new Call("GET", url, null, false));
             if (url.equals(YGGDRASIL)) {
                 return yggdrasilMeta();
             }
@@ -128,7 +138,7 @@ class InjectorClientTokenTest {
 
         @Override
         public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) {
-            calls.add(new Call("POST", url, body));
+            calls.add(new Call("POST", url, body, ignoreHttpStatus));
             if (url.equals(YGGDRASIL + "/authserver/authenticate")) {
                 return authenticateResponse();
             }
@@ -151,7 +161,7 @@ class InjectorClientTokenTest {
         /** HEAD 用于解析 X-Authlib-Injector-API-Location；空头即让 provider 退回 {@code <base>/api/yggdrasil}。 */
         @Override
         public Map<String, List<String>> head(String url) {
-            calls.add(new Call("HEAD", url, null));
+            calls.add(new Call("HEAD", url, null, false));
             return Map.of();
         }
 
@@ -304,6 +314,65 @@ class InjectorClientTokenTest {
                 .hasMessageContaining("ForbiddenOperationException")
                 .hasMessageContaining("Invalid token")
                 .hasMessageNotContaining(ACCESS_TOKEN);
+    }
+
+    /**
+     * 不规范的错误响应（{@code "error": null}）不得绕过 {@link InjectorAuthException}。
+     *
+     * <p>原实现直接对 {@code error} 调 {@code getAsString()}，遇到 JsonNull 会抛
+     * {@link UnsupportedOperationException}，用户看到的会退化成「未知错误」。</p>
+     */
+    @Test
+    void malformedErrorResponse_stillYieldsActionableException() throws Exception {
+        Method throwIfError = AbstractInjectorAccountProvider.class
+                .getDeclaredMethod("throwIfError", JsonObject.class);
+        throwIfError.setAccessible(true);
+
+        JsonObject nullError = new JsonObject();
+        nullError.add("error", JsonNull.INSTANCE);
+        assertThatCode(() -> throwIfError.invoke(null, nullError)).doesNotThrowAnyException();
+
+        JsonObject stringError = new JsonObject();
+        stringError.addProperty("error", "ForbiddenOperationException");
+        assertThatThrownBy(() -> throwIfError.invoke(null, stringError))
+                .hasRootCauseInstanceOf(InjectorAuthException.class)
+                .rootCause()
+                .hasMessageContaining("ForbiddenOperationException");
+
+        JsonObject objectError = new JsonObject();
+        JsonObject nested = new JsonObject();
+        nested.addProperty("code", 403);
+        objectError.add("error", nested);
+        assertThatThrownBy(() -> throwIfError.invoke(null, objectError))
+                .hasRootCauseInstanceOf(InjectorAuthException.class);
+    }
+
+    /**
+     * 认证请求必须忽略 HTTP 状态码：Yggdrasil 的失败是标准 JSON 错误体（drasl 一律 403），
+     * 若先被网关的状态码校验拦掉，就只剩 {@code HTTP 403}，服务端原因与 i18n 提示全部丢失。
+     * 真机上验证过该缺陷，这里锁住回归。
+     */
+    @Test
+    void authRequestsIgnoreHttpStatusSoErrorBodyIsReachable() {
+        ScriptedHttpGateway fake = new ScriptedHttpGateway();
+        JsonObject error = new JsonObject();
+        error.addProperty("error", "ForbiddenOperationException");
+        error.addProperty("errorMessage", "Invalid token");
+        fake.refreshError = error;
+
+        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+                ACCESS_TOKEN, PLAYER_NAME, PLAYER_UUID,
+                YGGDRASIL, PLAYER_UUID.toString(), "Drasl", null, 0L, "fake-client-token"
+        );
+
+        assertThatThrownBy(() -> TaskScheduler.submitParallel(() -> provider(fake).refresh(account)).get())
+                .rootCause()
+                .isInstanceOf(InjectorAuthException.class)
+                .hasMessageContaining("Invalid token");
+
+        assertThat(fake.lastPostIgnoredStatus(YGGDRASIL + "/authserver/refresh"))
+                .as("refresh 必须用 ignoreHttpStatus=true 才能读到 403 的错误体")
+                .isTrue();
     }
 
     private static JsonObject legacyAccountJson() {

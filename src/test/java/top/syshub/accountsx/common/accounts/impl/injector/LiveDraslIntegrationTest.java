@@ -121,4 +121,36 @@ class LiveDraslIntegrationTest {
         System.out.println("[IT] meta = " + meta);
         assertThat(meta).isNotNull();
     }
+
+    /**
+     * 真机错误链路：拿一个无效 accessToken 去刷新，服务端必然 403，客户端必须
+     * 抛出携带 i18n key 的 {@link InjectorAuthException}，且异常文本里不能出现令牌本身。
+     */
+    @Test
+    void invalidAccessToken_yieldsActionableErrorWithoutLeakingToken() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(configured(), "未配置服务器");
+
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(JdkHttpGateway.INSTANCE);
+        String leakedMarker = "TOP-SECRET-ACCESS-TOKEN-MARKER";
+        AuthlibInjectorAccount broken = new AuthlibInjectorAccount(
+                leakedMarker, "nobody", java.util.UUID.randomUUID(),
+                SERVER + "/authlib-injector", java.util.UUID.randomUUID().toString(),
+                null, null, 0L, "0123456789abcdef0123456789abcdef"
+        );
+
+        try {
+            TaskScheduler.submitParallel(() -> provider.refresh(broken)).get();
+            org.junit.jupiter.api.Assertions.fail("对无效令牌的刷新不应成功");
+        } catch (Exception e) {
+            Throwable cause = e;
+            while (cause.getCause() != null) {
+                cause = cause.getCause();
+            }
+            System.out.println("[IT] 无效令牌被拒：" + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+            assertThat(cause).isInstanceOf(InjectorAuthException.class);
+            assertThat(((InjectorAuthException) cause).getTranslationKey())
+                    .isEqualTo("accountsx.account.fail.injector_invalid_token");
+            assertThat(cause.getMessage()).doesNotContain(leakedMarker);
+        }
+    }
 }

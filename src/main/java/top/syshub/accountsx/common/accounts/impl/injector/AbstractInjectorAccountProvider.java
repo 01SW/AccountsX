@@ -70,9 +70,14 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     /**
      * 统一把服务端的 Yggdrasil 错误响应转成 {@link InjectorAuthException}。
      * 注意只暴露服务端返回的 error / errorMessage，绝不带上任何令牌。
+     *
+     * <p>对 {@code "error"} 做类型判断而非直接 {@code getAsString()}：不规范的服务端可能把它写成
+     * {@code null} 或对象，此时 {@code getAsString()} 会抛 {@link UnsupportedOperationException}，
+     * 让本可操作的提示退化成「未知错误」并丢掉错误本身。</p>
      */
     private static void throwIfError(JsonObject json) throws InjectorAuthException {
-        if (!json.has("error")) {
+        JsonElement error = json.get("error");
+        if (error == null || error.isJsonNull()) {
             return;
         }
 
@@ -80,7 +85,7 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         String detail = errorMessage != null && errorMessage.isJsonPrimitive() ? errorMessage.getAsString() : "";
         throw new InjectorAuthException(
                 "accountsx.account.fail.injector_invalid_token",
-                "Cannot auth this injector: " + json.get("error").getAsString() + (detail.isEmpty() ? "" : " - " + detail)
+                "Cannot auth this injector: " + error + (detail.isEmpty() ? "" : " - " + detail)
         );
     }
 
@@ -199,7 +204,9 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         root.addProperty("password", memory.get(GUID_PASSWORD, String.class));
         root.addProperty("clientToken", clientToken);
 
-        JsonObject json = http.postJson(loginUrl, root);
+        // ignoreHttpStatus=true：Yggdrasil 的认证失败是标准 JSON 错误体（drasl 一律 403 + error/errorMessage），
+        // 若先被网关的状态码校验拦下，就只剩 "HTTP 403"，用户看不到真正原因（也丢了 i18n 提示）。
+        JsonObject json = http.postJson(loginUrl, root, true);
         throwIfError(json);
 
         String accessToken = json.get("accessToken").getAsString();
@@ -273,7 +280,8 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         root.addProperty("accessToken", account.getLoginToken());
         root.addProperty("clientToken", clientToken);
 
-        JsonObject json = http.postJson(refreshUrl, root);
+        // 同上：必须读得到 403 的错误体，才能把「凭据已失效」这类可操作原因告诉用户。
+        JsonObject json = http.postJson(refreshUrl, root, true);
         throwIfError(json);
 
         String accessToken = json.get("accessToken").getAsString();
