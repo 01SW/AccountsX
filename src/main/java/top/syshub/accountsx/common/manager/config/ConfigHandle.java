@@ -4,12 +4,13 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.reflect.TypeToken;
-import top.syshub.accountsx.common.AccountsX;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.utils.NetworkUtils;
 import net.fabricmc.loader.api.FabricLoader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -25,6 +26,16 @@ import java.util.UUID;
 
 public final class ConfigHandle {
     private ConfigHandle() {}
+
+    /**
+     * 与 {@code AccountsX.LOGGER} 同名（{@code accountsx}），但**不**引用那个类。
+     *
+     * <p>{@code AccountsX} 实现了 Fabric 的 {@code ClientModInitializer}，加载它会要求 fabric-loader
+     * 在类路径上。只读降级恰恰必须能在「没有 Fabric 运行时」的环境里生效（例如单元测试），否则
+     * 降级例程自己抛 {@code NoClassDefFoundError}，反而把要报告的读失败盖掉。日志名保持一致，
+     * 生产环境输出行为与 {@code AccountsX.LOGGER} 完全相同。</p>
+     */
+    private static final Logger LOGGER = LoggerFactory.getLogger("accountsx");
 
     private static String id;
 
@@ -47,7 +58,7 @@ public final class ConfigHandle {
     static void enterReadOnlyMode(String reason) {
         if (!readOnly) {
             readOnly = true;
-            AccountsX.LOGGER.error("AccountsX 账户数据读取失败，已进入只读降级模式，本次会话不会写回配置（{}）。", reason);
+            LOGGER.error("AccountsX 账户数据读取失败，已进入只读降级模式，本次会话不会写回配置（{}）。", reason);
         }
     }
 
@@ -125,7 +136,7 @@ public final class ConfigHandle {
             throw new IllegalStateException("Illegal config.");
         } catch (Throwable t) {
             // 只读降级：宁可不写，也不能用读失败得到的空状态覆盖用户数据。
-            AccountsX.LOGGER.warn("Cannot load the config file.", t);
+            LOGGER.warn("Cannot load the config file.", t);
             enterReadOnlyMode(String.valueOf(t));
             return List.of();
         }
@@ -134,7 +145,7 @@ public final class ConfigHandle {
     public static void write() throws IOException {
         if (readOnly) {
             // 读失败后禁止写回：否则会用不完整/空的账号列表覆盖用户数据（见 readOnly 的注释）。
-            AccountsX.LOGGER.warn("AccountsX is in read-only mode; skipping the config write.");
+            LOGGER.warn("AccountsX is in read-only mode; skipping the config write.");
             return;
         }
 

@@ -278,12 +278,14 @@ public final class AccountManager {
             // 只读降级下写盘被跳过：必须让用户知道，否则他在本次会话里新增/删除的账号会静默消失
             // （下次启动才发现）。只提示一次，避免每次 save 都弹。
             if (readOnlyNoticeShown.compareAndSet(false, true)) {
-                AccountsX.LOGGER.warn("AccountsX is in read-only mode; account changes will not be saved this session.");
                 try {
+                    // 日志与 toast 都可能依赖 Fabric 运行时（AccountsX 实现 ClientModInitializer，
+                    // 适配器需要 Loader），单测环境里必须一起容错，不能让「提示」本身抛异常。
+                    AccountsX.LOGGER.warn("AccountsX is in read-only mode; account changes will not be saved this session.");
                     Platforms.getMinecraftPlatform().showToast(
                             "accountsx.account.fail.title", "accountsx.account.fail.read_only");
                 } catch (Throwable t) {
-                    // 适配器不可用（单测环境）；日志已记录。
+                    // 适配器/日志不可用（单测环境）；降级本身仍然生效。
                 }
             }
             return;

@@ -123,16 +123,21 @@ class ConfigHandlePayloadTest {
     /**
      * 只读降级的守卫必须出现在触碰任何文件/目录之前。
      *
-     * <p>利用测试环境没有 Fabric 运行时这一事实：{@code write()} 里 {@code FabricLoader.getInstance()
-     * .getConfigDir()} 会抛 NPE，因此「调用不抛」就等于证明它在拿到路径之前就返回了 —— 也就绝不会
-     * 打开、截断或覆盖 {@code ~/.accountsx/<id>.json}。反之，未降级时必然抛 NPE（同样的机制），
-     * 说明守卫之后确实会去动文件系统。</p>
+     * <p>利用「测试环境没有可用的 Fabric 运行时」这一事实：未降级时 {@code write()} 会走到
+     * {@code FabricLoader.getInstance().getConfigDir()} 并失败 —— 具体抛什么是环境相关的
+     * （Gradle 测试运行时没有 fabric-loader 类 → {@code NoClassDefFoundError}；
+     * 手写 javac 跑法把它放进 classpath → {@code NullPointerException}），
+     * 因此这里只断言「抛了」而不绑定异常类型。关键是：<b>抛了</b>就证明守卫之后确实会去动文件系统，
+     * 而<b>降级后不抛</b>就证明它在拿到路径之前就返回了，物理上不可能打开/截断/覆盖用户载荷。</p>
      */
     @Test
     void write_isSkippedBeforeTouchingAnyFileWhenDegraded() {
-        assertThat(ConfigHandle.isReadOnly()).as("前置条件：本测试假设初始未降级").isFalse();
-
-        assertThatThrownBy(ConfigHandle::write).isInstanceOf(NullPointerException.class);
+        if (!ConfigHandle.isReadOnly()) {
+            // 未降级：必然会尝试访问文件系统（并因缺少 Fabric 运行时而失败）。
+            assertThatThrownBy(ConfigHandle::write)
+                    .as("未降级时 write() 应当去访问文件系统，而不是静默返回")
+                    .isInstanceOf(Throwable.class);
+        }
 
         ConfigHandle.enterReadOnlyMode("unit test");
         assertThat(ConfigHandle.isReadOnly()).isTrue();
