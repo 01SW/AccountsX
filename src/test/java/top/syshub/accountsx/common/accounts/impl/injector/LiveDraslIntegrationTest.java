@@ -84,9 +84,10 @@ class LiveDraslIntegrationTest {
         assertThat(account.getServer()).isEqualTo(apiBase);
         assertThat(account.getAccountName()).as("meta.serverName").isNotBlank();
         assertThat(account.getAccountStorage().getPlayerName()).isNotBlank();
+        // 只打印长度，不打印 clientToken 的任何片段（项目规范：日志不得含凭据内容）。
         System.out.println("[IT] 登录成功 player=" + account.getAccountStorage().getPlayerName()
                 + " uuid=" + account.getAccountStorage().getPlayerUUID()
-                + " clientToken掩码=" + account.getClientToken().substring(0, 4) + "****");
+                + " clientToken.len=" + account.getClientToken().length());
 
         // ── 2) 落盘 + 重新加载（对应关游戏 / 重开游戏）──
         String persisted = NetworkUtils.GSON.toJson(account);

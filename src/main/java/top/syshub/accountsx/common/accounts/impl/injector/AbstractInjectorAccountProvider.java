@@ -74,8 +74,11 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
      * <p>对 {@code "error"} 做类型判断而非直接 {@code getAsString()}：不规范的服务端可能把它写成
      * {@code null} 或对象，此时 {@code getAsString()} 会抛 {@link UnsupportedOperationException}，
      * 让本可操作的提示退化成「未知错误」并丢掉错误本身。</p>
+     *
+     * <p>i18n key 按调用场景区分：登录失败多半是用户名/密码写错（此时还没有账号可删），
+     * 而刷新失败才是「凭据已失效」——沿用同一条提示会给出错误的操作建议。</p>
      */
-    private static void throwIfError(JsonObject json) throws InjectorAuthException {
+    private static void throwIfError(JsonObject json, String translationKey) throws InjectorAuthException {
         JsonElement error = json.get("error");
         if (error == null || error.isJsonNull()) {
             return;
@@ -84,9 +87,25 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         JsonElement errorMessage = json.get("errorMessage");
         String detail = errorMessage != null && errorMessage.isJsonPrimitive() ? errorMessage.getAsString() : "";
         throw new InjectorAuthException(
-                "accountsx.account.fail.injector_invalid_token",
+                translationKey,
                 "Cannot auth this injector: " + error + (detail.isEmpty() ? "" : " - " + detail)
         );
+    }
+
+    /**
+     * 取响应里的 accessToken；缺失或类型不对时抛 {@link IOException} 而不是 NPE。
+     *
+     * <p>认证请求是忽略 HTTP 状态码发出的（否则读不到 403 的错误体），因此任何非 2xx 响应都可能
+     * 流到这里。drasl 的 500 响应是 {@code {"path":…,"errorMessage":"internal server error"}} ——
+     * 没有 {@code error} 字段，{@link #throwIfError} 会放行；若此时直接取值，抛出的未检查异常会
+     * 绕过 {@code AccountManager.refreshAccount} 的 IOException 分支，账号永远停在「登录中」。</p>
+     */
+    private static String requireAccessToken(JsonObject json) throws IOException {
+        JsonElement accessToken = json.get("accessToken");
+        if (accessToken == null || !accessToken.isJsonPrimitive() || !accessToken.getAsJsonPrimitive().isString()) {
+            throw new IOException("Yggdrasil response does not contain an accessToken: " + json);
+        }
+        return accessToken.getAsString();
     }
 
     /**
@@ -207,9 +226,9 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         // ignoreHttpStatus=true：Yggdrasil 的认证失败是标准 JSON 错误体（drasl 一律 403 + error/errorMessage），
         // 若先被网关的状态码校验拦下，就只剩 "HTTP 403"，用户看不到真正原因（也丢了 i18n 提示）。
         JsonObject json = http.postJson(loginUrl, root, true);
-        throwIfError(json);
+        throwIfError(json, "accountsx.account.fail.injector_login");
 
-        String accessToken = json.get("accessToken").getAsString();
+        String accessToken = requireAccessToken(json);
         clientToken = echoedClientToken(json, clientToken);
 
         String playerName = memory.get(GUID_PLAYER_NAME, String.class);
@@ -282,27 +301,25 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
 
         // 同上：必须读得到 403 的错误体，才能把「凭据已失效」这类可操作原因告诉用户。
         JsonObject json = http.postJson(refreshUrl, root, true);
-        throwIfError(json);
+        throwIfError(json, "accountsx.account.fail.injector_invalid_token");
 
-        String accessToken = json.get("accessToken").getAsString();
+        String accessToken = requireAccessToken(json);
 
-        String echoed = echoedClientToken(json, clientToken);
-        if (!echoed.equals(clientToken)) {
-            account.setClientToken(echoed);
-        }
-
+        // 先把 profile 解析完再落盘令牌：readProfiles 可能抛（多角色场景找不到首选角色会抛
+        // PlayerNoLongerExistedException）。若先写入轮换后的 clientToken、随后解析失败，
+        // 账号就会留下「旧 accessToken + 新 clientToken」的组合，之后每次刷新都 403，直到手动重加。
         List<Profile> profiles = readProfiles(json);
+        String echoed = echoedClientToken(json, clientToken);
+
         if (profiles.size() == 1) {
             Profile profile = profiles.get(0);
-            account.setLoginProfile(accessToken, profile.playerUUID);
-            account.setProfile(accessToken, profile.playerName, AccountUUID.parse(profile.playerUUID));
+            commitLoginState(account, accessToken, clientToken, echoed, profile);
         } else {
             String preferredPlayerUUID = account.getPreferredPlayerUUID();
 
             for (Profile profile : profiles) {
                 if (profile.playerUUID.equals(preferredPlayerUUID)) {
-                    account.setLoginProfile(accessToken, profile.playerUUID);
-                    account.setProfile(accessToken, profile.playerName, AccountUUID.parse(profile.playerUUID));
+                    commitLoginState(account, accessToken, clientToken, echoed, profile);
                     AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUUID);
                     account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
                     return;
@@ -310,6 +327,15 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             }
 
             throw new PlayerNoLongerExistedException("Cannot find player which match " + preferredPlayerUUID);
+        }
+    }
+
+    /** 把一次成功刷新的结果一次性写入账号：accessToken / clientToken / 玩家档案三者保持一致。 */
+    private static void commitLoginState(AbstractInjectorAccount account, String accessToken, String clientToken, String echoedClientToken, Profile profile) {
+        account.setLoginProfile(accessToken, profile.playerUUID());
+        account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUUID()));
+        if (!echoedClientToken.equals(clientToken)) {
+            account.setClientToken(echoedClientToken);
         }
     }
 

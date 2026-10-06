@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
+import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider.AuthlibInjectorAccount;
 import top.syshub.accountsx.common.net.HttpGateway;
@@ -13,7 +14,6 @@ import top.syshub.accountsx.common.ui.Memory;
 import top.syshub.accountsx.common.utils.NetworkUtils;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +22,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -48,6 +47,10 @@ class InjectorClientTokenTest {
     private static final String ACCESS_TOKEN = "fake-access-token";
     private static final String NEW_ACCESS_TOKEN = "fake-access-token-2";
 
+    /** 生产载荷的真实类型：{@code List<BaseAccount>}（走 BaseAccount.Adapter 按 type 派发）。 */
+    private static final java.lang.reflect.Type ACCOUNT_LIST_TYPE =
+            new com.google.gson.reflect.TypeToken<List<? extends BaseAccount>>() {}.getType();
+
     /** 记录每次请求、按 URL 返回预置响应的假网关。 */
     private static final class ScriptedHttpGateway implements HttpGateway {
         private record Call(String method, String url, JsonElement body, boolean ignoredHttpStatus) {}
@@ -56,6 +59,9 @@ class InjectorClientTokenTest {
 
         /** 非 null 时，refresh 端点返回该错误响应（模拟 drasl 的 403 Invalid token）。 */
         private JsonObject refreshError;
+
+        /** 非 null 时，authenticate 端点返回该错误响应（模拟登录被拒）。 */
+        private JsonObject authenticateError;
 
         List<Call> callsTo(String url) {
             return calls.stream().filter(c -> c.url().equals(url)).toList();
@@ -103,6 +109,9 @@ class InjectorClientTokenTest {
             return json;
         }
 
+        /** 非 null 时用作 refresh 的成功响应（用于断言服务端回显的 clientToken 被采纳）。 */
+        private JsonObject refreshSuccess;
+
         private static JsonObject refreshResponse() {
             JsonObject profile = new JsonObject();
             profile.addProperty("name", PLAYER_NAME);
@@ -140,10 +149,11 @@ class InjectorClientTokenTest {
         public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) {
             calls.add(new Call("POST", url, body, ignoreHttpStatus));
             if (url.equals(YGGDRASIL + "/authserver/authenticate")) {
-                return authenticateResponse();
+                return authenticateError != null ? authenticateError : authenticateResponse();
             }
             if (url.equals(YGGDRASIL + "/authserver/refresh")) {
-                return refreshError != null ? refreshError : refreshResponse();
+                if (refreshError != null) return refreshError;
+                return refreshSuccess != null ? refreshSuccess : refreshResponse();
             }
             throw new UnsupportedOperationException("fake: unexpected POST " + url);
         }
@@ -225,9 +235,14 @@ class InjectorClientTokenTest {
         String json = NetworkUtils.GSON.toJson(account);
         assertThat(json).contains(account.getClientToken());
 
-        AuthlibInjectorAccount restored = NetworkUtils.GSON.fromJson(json, AuthlibInjectorAccount.class);
-        assertThat(restored.getClientToken()).isEqualTo(account.getClientToken());
-        assertThat(restored.getLoginToken()).isEqualTo(account.getLoginToken());
+        // 走生产路径：载荷是 List<BaseAccount>，由 BaseAccount.Adapter 按 "type" 派发到具体类
+        // （@JsonAdapter 不继承，直接 fromJson(..., AuthlibInjectorAccount.class) 并不覆盖这条分派）。
+        List<? extends BaseAccount> restored = NetworkUtils.GSON.fromJson("[" + json + "]", ACCOUNT_LIST_TYPE);
+        assertThat(restored).hasSize(1);
+        assertThat(restored.get(0)).isInstanceOf(AuthlibInjectorAccount.class);
+        AuthlibInjectorAccount reloaded = (AuthlibInjectorAccount) restored.get(0);
+        assertThat(reloaded.getClientToken()).isEqualTo(account.getClientToken());
+        assertThat(reloaded.getLoginToken()).isEqualTo(account.getLoginToken());
     }
 
     /** 刷新必须回传持久化的 clientToken —— 这是 drasl 上「第二次打不开」的直接原因。 */
@@ -263,7 +278,11 @@ class InjectorClientTokenTest {
     /** 兼容性：旧配置的账号没有 clientToken 字段，反序列化后为 null，不能因此加载失败。 */
     @Test
     void legacyPayloadWithoutClientToken_loads() {
-        AuthlibInjectorAccount restored = NetworkUtils.GSON.fromJson(legacyAccountJson(), AuthlibInjectorAccount.class);
+        List<? extends BaseAccount> loaded = NetworkUtils.GSON.fromJson(
+                "[" + legacyAccountJson() + "]",
+                ACCOUNT_LIST_TYPE
+        );
+        AuthlibInjectorAccount restored = (AuthlibInjectorAccount) loaded.get(0);
 
         assertThat(restored).isNotNull();
         assertThat(restored.getClientToken()).isNull();
@@ -323,28 +342,37 @@ class InjectorClientTokenTest {
      * {@link UnsupportedOperationException}，用户看到的会退化成「未知错误」。</p>
      */
     @Test
-    void malformedErrorResponse_stillYieldsActionableException() throws Exception {
-        Method throwIfError = AbstractInjectorAccountProvider.class
-                .getDeclaredMethod("throwIfError", JsonObject.class);
-        throwIfError.setAccessible(true);
-
+    void malformedErrorResponse_stillYieldsActionableException() {
+        // "error": null 视为“没有错误字段”，走成功路径 → 由 requireAccessToken 报出，而不是 NPE。
+        ScriptedHttpGateway nullErrorFake = new ScriptedHttpGateway();
         JsonObject nullError = new JsonObject();
         nullError.add("error", JsonNull.INSTANCE);
-        assertThatCode(() -> throwIfError.invoke(null, nullError)).doesNotThrowAnyException();
+        nullErrorFake.refreshError = nullError;
 
-        JsonObject stringError = new JsonObject();
-        stringError.addProperty("error", "ForbiddenOperationException");
-        assertThatThrownBy(() -> throwIfError.invoke(null, stringError))
-                .hasRootCauseInstanceOf(InjectorAuthException.class)
+        AuthlibInjectorAccount nullErrorAccount = new AuthlibInjectorAccount(
+                ACCESS_TOKEN, PLAYER_NAME, PLAYER_UUID,
+                YGGDRASIL, PLAYER_UUID.toString(), "Drasl", null, 0L, "fake-client-token"
+        );
+        assertThatThrownBy(() -> TaskScheduler.submitParallel(() -> provider(nullErrorFake).refresh(nullErrorAccount)).get())
                 .rootCause()
-                .hasMessageContaining("ForbiddenOperationException");
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("accessToken");
 
+        // "error" 是对象：仍必须产出可操作异常，而不是 UnsupportedOperationException。
+        ScriptedHttpGateway objectErrorFake = new ScriptedHttpGateway();
         JsonObject objectError = new JsonObject();
         JsonObject nested = new JsonObject();
         nested.addProperty("code", 403);
         objectError.add("error", nested);
-        assertThatThrownBy(() -> throwIfError.invoke(null, objectError))
-                .hasRootCauseInstanceOf(InjectorAuthException.class);
+        objectErrorFake.refreshError = objectError;
+
+        AuthlibInjectorAccount objectErrorAccount = new AuthlibInjectorAccount(
+                ACCESS_TOKEN, PLAYER_NAME, PLAYER_UUID,
+                YGGDRASIL, PLAYER_UUID.toString(), "Drasl", null, 0L, "fake-client-token"
+        );
+        assertThatThrownBy(() -> TaskScheduler.submitParallel(() -> provider(objectErrorFake).refresh(objectErrorAccount)).get())
+                .rootCause()
+                .isInstanceOf(InjectorAuthException.class);
     }
 
     /**
@@ -373,6 +401,67 @@ class InjectorClientTokenTest {
         assertThat(fake.lastPostIgnoredStatus(YGGDRASIL + "/authserver/refresh"))
                 .as("refresh 必须用 ignoreHttpStatus=true 才能读到 403 的错误体")
                 .isTrue();
+    }
+
+    /** 服务端在响应里回显不同的 clientToken 时必须被采纳，并在下一次刷新时使用新值。 */
+    @Test
+    void rotatedClientToken_isAdoptedAndUsedNextTime() throws ExecutionException, InterruptedException {
+        ScriptedHttpGateway fake = new ScriptedHttpGateway();
+        JsonObject rotated = new JsonObject();
+        rotated.addProperty("accessToken", NEW_ACCESS_TOKEN);
+        rotated.addProperty("clientToken", "rotated-client-token");
+        JsonObject profile = new JsonObject();
+        profile.addProperty("name", PLAYER_NAME);
+        profile.addProperty("id", PLAYER_UUID.toString());
+        rotated.add("selectedProfile", profile);
+        fake.refreshSuccess = rotated;
+
+        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+                ACCESS_TOKEN, PLAYER_NAME, PLAYER_UUID,
+                YGGDRASIL, PLAYER_UUID.toString(), "Drasl", null, 0L, "original-client-token"
+        );
+        TaskScheduler.submitParallel(() -> provider(fake).refresh(account)).get();
+
+        assertThat(account.getClientToken()).isEqualTo("rotated-client-token");
+
+        // 轮换后的值必须进入持久化载荷，供下次启动使用。
+        List<? extends BaseAccount> persisted = NetworkUtils.GSON.fromJson(
+                "[" + NetworkUtils.GSON.toJson(account) + "]",
+                ACCOUNT_LIST_TYPE
+        );
+        AuthlibInjectorAccount reloaded = (AuthlibInjectorAccount) persisted.get(0);
+        assertThat(reloaded.getClientToken()).isEqualTo("rotated-client-token");
+    }
+
+    /** 登录被拒（密码写错等）应给出「检查凭据」而不是「删除后重新添加」——此时还没有账号可删。 */
+    @Test
+    void rejectedLogin_usesCredentialHintKey() {
+        ScriptedHttpGateway fake = new ScriptedHttpGateway();
+        JsonObject error = new JsonObject();
+        error.addProperty("error", "ForbiddenOperationException");
+        error.addProperty("errorMessage", "Invalid credentials. Invalid username or password.");
+        fake.authenticateError = error;
+
+        assertThatThrownBy(() -> provider(fake).login(loginMemory()))
+                .isInstanceOf(InjectorAuthException.class)
+                .hasMessageContaining("Invalid credentials");
+    }
+
+    /** 失败提示使用的 i18n key 必须真实存在，否则界面会直接显示原始 key。 */
+    @Test
+    void failureTranslationKeysExistInLangFiles() throws IOException {
+        for (String lang : List.of("en_us.json", "zh_cn.json")) {
+            try (var in = getClass().getResourceAsStream("/assets/accountsx/lang/" + lang)) {
+                assertThat(in).as("%s not found", lang).isNotNull();
+                JsonObject json = NetworkUtils.GSON.fromJson(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8), JsonObject.class);
+                assertThat(json.keySet()).contains(
+                        "accountsx.account.fail.injector_login",
+                        "accountsx.account.fail.injector_invalid_token",
+                        "accountsx.account.fail.unknown",
+                        "accountsx.account.fail.title"
+                );
+            }
+        }
     }
 
     private static JsonObject legacyAccountJson() {

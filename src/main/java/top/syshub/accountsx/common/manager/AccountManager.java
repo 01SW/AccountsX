@@ -50,14 +50,18 @@ public final class AccountManager {
             for (BaseAccount account : toRefresh) {
                 refreshTasks.add(() -> refreshAccount(account, false));
             }
+            // 写盘必须等这一批刷新结束：刷新会轮换服务端令牌（Yggdrasil 刷新后旧 accessToken 立刻失效，
+            // drasl 用版本号作废它），若在刷新完成前就把账号写下去，落盘的是刷新前的旧令牌，
+            // 下次启动带着它去刷新必然 403 —— 表现就是「每次重开游戏都要重新添加账号」。
             TaskScheduler.runParallel(refreshTasks).whenComplete((ignored, t) -> {
                 if (t != null) {
                     AccountsX.LOGGER.warn("Some accounts failed to refresh during startup.", t);
                 }
+                save();
             });
+        } else {
+            save();
         }
-
-        save();
     }
 
     @Threading.Thread(Threading.ThreadRole.CLIENT)
@@ -96,6 +100,8 @@ public final class AccountManager {
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
             refreshAccount(account, true);
 
+            // 刷新会轮换服务端令牌（旧 accessToken 随即失效），必须立刻落盘，
+            // 否则下次启动会拿着已作废的令牌去刷新。
             save();
         }
 
@@ -133,6 +139,16 @@ public final class AccountManager {
                 throw e;
             } else {
                 AccountsX.LOGGER.error("Cannot refresh the account.", e);
+                return;
+            }
+        } catch (RuntimeException e) {
+            // 服务端返回畸形 JSON 等情况会以未检查异常冒出来（如 accessToken 缺失导致 NPE）。
+            // 状态机只认 IOException，若不在这里归位，账号会永远停在 AUTHORIZING（界面显示「登录中」）。
+            account.setProfileState(AccountState.UNAUTHORIZED);
+            if (thrown) {
+                throw e;
+            } else {
+                AccountsX.LOGGER.error("Cannot refresh the account (unexpected error).", e);
                 return;
             }
         }
