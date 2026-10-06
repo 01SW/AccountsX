@@ -1,6 +1,7 @@
 package top.syshub.accountsx.common.accounts.impl.injector;
 
 import com.google.gson.*;
+import top.syshub.accountsx.common.AccountsX;
 import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.model.PlayerNoLongerExistedException;
@@ -103,7 +104,9 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     private static String requireAccessToken(JsonObject json) throws IOException {
         JsonElement accessToken = json.get("accessToken");
         if (accessToken == null || !accessToken.isJsonPrimitive() || !accessToken.getAsJsonPrimitive().isString()) {
-            throw new IOException("Yggdrasil response does not contain an accessToken: " + json);
+            // 只报告字段名，绝不把响应体拼进消息：该消息会进日志，而某些 Yggdrasil 实现的错误体
+            // 会回显 accessToken/clientToken，等于把凭据写进日志（违反 AGENTS.md 的安全约束）。
+            throw new IOException("Yggdrasil response does not contain a string accessToken; fields=" + json.keySet());
         }
         return accessToken.getAsString();
     }
@@ -289,6 +292,10 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         if (clientToken == null || clientToken.isEmpty()) {
             // 旧版本（2.0.0-beta.3 及更早）登录时未保存 clientToken，且当时也没有保存密码，
             // 无法凭现有载荷补出能通过服务端比对的值；只能让用户重新添加该账号。
+            //
+            // 已用真机（drasl 4.0.1）确认没有更省事的退路：refresh 省略 clientToken 与发送空字符串
+            // 都稳定返回 403 ForbiddenOperationException: Invalid token，只有携带正确值才 200。
+            // 因此这里直接给出可操作提示，不再白发一次注定失败的请求。
             throw new InjectorAuthException(
                     "accountsx.account.fail.injector_invalid_token",
                     "This injector account has no clientToken (created by an older version); add it again."
@@ -304,38 +311,56 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         throwIfError(json, "accountsx.account.fail.injector_invalid_token");
 
         String accessToken = requireAccessToken(json);
-
-        // 先把 profile 解析完再落盘令牌：readProfiles 可能抛（多角色场景找不到首选角色会抛
-        // PlayerNoLongerExistedException）。若先写入轮换后的 clientToken、随后解析失败，
-        // 账号就会留下「旧 accessToken + 新 clientToken」的组合，之后每次刷新都 403，直到手动重加。
-        List<Profile> profiles = readProfiles(json);
         String echoed = echoedClientToken(json, clientToken);
 
-        if (profiles.size() == 1) {
-            Profile profile = profiles.get(0);
-            commitLoginState(account, accessToken, clientToken, echoed, profile);
-        } else {
-            String preferredPlayerUUID = account.getPreferredPlayerUUID();
+        // 关键顺序：**立刻**提交服务端已经轮换好的令牌，再去解析角色。
+        // 刷新一旦被服务端接受，旧 accessToken 就已经作废（drasl 递增版本号）；若此时因为角色解析
+        // 失败而把新令牌丢掉，账号会永久卡在「旧令牌已死、新令牌没保存」，只能重新添加。
+        // 角色解析失败因此降级为「保留旧档案 + 记一条警告」，不再影响令牌落地。
+        account.setLoginProfile(accessToken, account.getPreferredPlayerUUID());
+        account.setProfile(accessToken, account.getAccountStorage().getPlayerName(), account.getAccountStorage().getPlayerUUID());
+        if (!echoed.equals(clientToken)) {
+            account.setClientToken(echoed);
+        }
 
+        Profile profile = resolveRefreshedProfile(account, json);
+        if (profile == null) {
+            return;
+        }
+
+        account.setLoginProfile(accessToken, profile.playerUUID());
+        account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUUID()));
+
+        // 头像属于可选附加信息，失败由 AvatarService 自行吞掉。
+        AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUUID());
+        account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+    }
+
+    /**
+     * 解析刷新响应里的角色；解析不出来时保留账号原有档案并记警告（返回 {@code null}）。
+     * 刷新本身已经成功，绝不能因为角色信息异常把整次刷新判为失败。
+     */
+    private Profile resolveRefreshedProfile(AbstractInjectorAccount account, JsonObject json) {
+        try {
+            List<Profile> profiles = readProfiles(json);
+            if (profiles.size() == 1) {
+                return profiles.get(0);
+            }
+
+            String preferredPlayerUUID = account.getPreferredPlayerUUID();
             for (Profile profile : profiles) {
-                if (profile.playerUUID.equals(preferredPlayerUUID)) {
-                    commitLoginState(account, accessToken, clientToken, echoed, profile);
-                    AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUUID);
-                    account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
-                    return;
+                if (profile.playerUUID().equals(preferredPlayerUUID)) {
+                    return profile;
                 }
             }
 
-            throw new PlayerNoLongerExistedException("Cannot find player which match " + preferredPlayerUUID);
-        }
-    }
-
-    /** 把一次成功刷新的结果一次性写入账号：accessToken / clientToken / 玩家档案三者保持一致。 */
-    private static void commitLoginState(AbstractInjectorAccount account, String accessToken, String clientToken, String echoedClientToken, Profile profile) {
-        account.setLoginProfile(accessToken, profile.playerUUID());
-        account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUUID()));
-        if (!echoedClientToken.equals(clientToken)) {
-            account.setClientToken(echoedClientToken);
+            // 服务端不再返回首选角色（例如角色已被删除、或服务端只回 selectedProfile）。
+            AccountsX.LOGGER.warn("Refreshed profile list does not contain the preferred player {}; keeping the previous profile.", preferredPlayerUUID);
+            return null;
+        } catch (RuntimeException e) {
+            // PlayerNoLongerExistedException 也是 RuntimeException；解析失败不再影响令牌落地。
+            AccountsX.LOGGER.warn("Cannot resolve the refreshed profile; keeping the previous one.", e);
+            return null;
         }
     }
 

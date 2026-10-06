@@ -15,8 +15,10 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -114,7 +116,7 @@ public final class ConfigHandle {
 
                     // 先完整读出载荷，成功后才把 id 落地 —— 否则读失败后 id 仍然有效，
                     // 紧接着的 save() 就会把该 id 对应的载荷文件覆写成空列表。
-                    List<? extends BaseAccount> loaded = getAccounts();
+                    List<? extends BaseAccount> loaded = getAccounts(true);
                     id = parsedId;
                     return loaded;
                 }
@@ -155,14 +157,26 @@ public final class ConfigHandle {
         }
     }
 
-    private static List<? extends BaseAccount> getAccounts() {
+    /**
+     * 读取账号载荷。
+     *
+     * @param configExisted 配置文件是否本来就存在（id 来自磁盘）。为 true 时「看不到载荷文件」
+     *                      属于读失败（进入只读降级），而不是「这个实例还没有账号」。
+     */
+    private static List<? extends BaseAccount> getAccounts(boolean configExisted) {
         String userHome = System.getProperty("user.home");
         Path accountsFile = Path.of(userHome, ".accountsx", id + ".json");
 
         try {
-            if (!Files.exists(accountsFile) || !Files.isRegularFile(accountsFile))
+            if (!Files.exists(accountsFile) || !Files.isRegularFile(accountsFile)) {
+                // 配置文件已存在（id 来自磁盘）却看不到载荷文件：这是「读不到」，不是「没有账号」。
+                // 若当成空账号集放行，紧接着的 save() 会新建一个 [] 覆盖掉（可能是尚未同步完成的）
+                // 真实数据；进入只读降级则只影响本次会话。
+                if (configExisted) {
+                    enterReadOnlyMode("accounts payload is missing or not a regular file: " + accountsFile);
+                }
                 return List.of();
-
+            }
             try (Reader reader = Files.newBufferedReader(accountsFile, StandardCharsets.UTF_8)) {
                 List<? extends BaseAccount> accounts = NetworkUtils.GSON.fromJson(
                         reader,
@@ -179,15 +193,36 @@ public final class ConfigHandle {
         }
     }
 
+    /**
+     * 原子写入账号载荷：先写同目录临时文件，再 {@code ATOMIC_MOVE} 覆盖。
+     *
+     * <p>原来直接 {@code Files.writeString} 是就地截断：中途崩溃/断电/磁盘写满都会留下**残缺**的
+     * 载荷文件，下次启动就是读失败 —— 结合只读降级虽不会再写坏，但用户账号已经不可读且没有备份。
+     * 原子替换保证任何时刻目标文件要么是旧的完整内容、要么是新的完整内容。</p>
+     */
     static void writeAccounts(String id, String accountString) {
         String userHome = System.getProperty("user.home");
         Path accountsFile = Path.of(userHome, ".accountsx", id + ".json");
+        Path temporaryFile = accountsFile.resolveSibling(id + ".json.tmp");
 
         try {
             Files.createDirectories(accountsFile.getParent());
-            Files.writeString(accountsFile, accountString);
+            Files.writeString(temporaryFile, accountString, StandardCharsets.UTF_8);
+            try {
+                Files.move(temporaryFile, accountsFile,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                // 临时文件与目标不同文件系统（例如 ~/.accountsx 是指向别处的软链接）时退回普通替换。
+                Files.move(temporaryFile, accountsFile, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             throw new RuntimeException("Failed to write accounts file", e);
+        } finally {
+            try {
+                Files.deleteIfExists(temporaryFile);
+            } catch (IOException ignored) {
+                // 临时文件残留无害：下次写入会复用同名文件并覆盖。
+            }
         }
     }
 }
