@@ -158,12 +158,25 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             throw new IOException("Invalid Yggdrasil public key!");
         }
 
+        // drasl 4.x 等实现会在元数据里声明 feature.enable_profile_key：
+        // 它们的 minecraftservices 前缀下有真正的 player/certificates 端点，能签发
+        // 被「服务端 authlib-injector 指向同一认证服务器」信任的档案密钥对签名。
+        // 此时必须让 authlib 走真实请求，而不是让 mixin 注入假签名导致服务端以
+        // 「无效的玩家档案公钥签名」踢人。缺省（含解析失败）保持 false → 旧回退行为。
+        boolean profileKeySupported = false;
+        if (response.get("meta") instanceof JsonObject meta
+                && meta.get("feature.enable_profile_key") instanceof JsonPrimitive flag
+                && flag.isBoolean()) {
+            profileKeySupported = flag.getAsBoolean();
+        }
+
         return new AccountContext(new AuthServerContext(
                 url + "/authserver",
                 url + "/api",
                 url + "/sessionserver",
                 url + "/minecraftservices",
-                accountContextName
+                accountContextName,
+                profileKeySupported
         ), new AuthSecurityContext(
                 publicKeys, publicKeys,
                 SkinURLVerifier.ofOperationOR(SkinURLVerifier.ofDomainVerifier(skinDomains, List.of()), SkinURLVerifier.MOJANG_DEFAULT)

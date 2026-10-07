@@ -3,8 +3,10 @@ package top.syshub.accountsx.common.manager;
 import top.syshub.accountsx.common.AccountsX;
 import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.BaseAccount;
+import top.syshub.accountsx.common.accounts.impl.injector.InjectorProfileKeys;
 import top.syshub.accountsx.common.accounts.model.AccountState;
 import top.syshub.accountsx.common.accounts.model.AccountType;
+import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
 import top.syshub.accountsx.common.manager.config.ConfigHandle;
@@ -131,9 +133,14 @@ public final class AccountManager {
             refreshAccount(account, true);
         }
 
+        AccountContext context = AccountProvider.getProvider(account).createAccountContext(account);
+        // mixin 是否注入假档案密钥对取决于该账号的认证服务器能否真实签发（见 InjectorProfileKeys）。
+        // 所有切号都经过这里，因此每次登录都会按当前账号刷新标志，不会残留上一个账号的值。
+        InjectorProfileKeys.set(context != null && context.server().profileKeySupported());
+
         return Platforms.authlibBridge().createAccountProfile(
                 account.getAccountStorage(),
-                AccountProvider.getProvider(account).createAccountContext(account),
+                context,
                 Platforms.getMinecraftPlatform().getGameProxy()
         );
     }
