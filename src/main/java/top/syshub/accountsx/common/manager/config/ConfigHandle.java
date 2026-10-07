@@ -127,7 +127,10 @@ public final class ConfigHandle {
 
                     // 先完整读出载荷，成功后才把 id 落地 —— 否则读失败后 id 仍然有效，
                     // 紧接着的 save() 就会把该 id 对应的载荷文件覆写成空列表。
-                    List<? extends BaseAccount> loaded = getAccounts(true);
+                    // 注意必须把 parsedId 作为参数传进去：静态字段此刻仍是 null，
+                    // 让 getAccounts() 读静态字段会去找 ~/.accountsx/null.json，
+                    // 每次冷启动都误判为读失败并进入只读降级（账号永远加载不出来）。
+                    List<? extends BaseAccount> loaded = getAccounts(true, parsedId);
                     id = parsedId;
                     return loaded;
                 }
@@ -173,10 +176,12 @@ public final class ConfigHandle {
      *
      * @param configExisted 配置文件是否本来就存在（id 来自磁盘）。为 true 时「看不到载荷文件」
      *                      属于读失败（进入只读降级），而不是「这个实例还没有账号」。
+     * @param payloadId     载荷文件名用的 id。冷启动路径上静态字段 {@code id} 尚未落地，
+     *                      必须由调用方显式传入，否则会拼出 {@code null.json} 这种假路径。
      */
-    private static List<? extends BaseAccount> getAccounts(boolean configExisted) {
+    private static List<? extends BaseAccount> getAccounts(boolean configExisted, String payloadId) {
         String userHome = System.getProperty("user.home");
-        Path accountsFile = Path.of(userHome, ".accountsx", id + ".json");
+        Path accountsFile = Path.of(userHome, ".accountsx", payloadId + ".json");
 
         try {
             if (!Files.exists(accountsFile) || !Files.isRegularFile(accountsFile)) {
