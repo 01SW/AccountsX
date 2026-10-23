@@ -6,14 +6,19 @@ import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FieldKey;
+import top.syshub.accountsx.common.ui.form.FormAction;
+import top.syshub.accountsx.common.ui.form.FormField;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
+import java.util.List;
 
 import java.util.Objects;
 import java.util.UUID;
 
 public class OfflineAccountProvider implements AccountProvider<OfflineAccount> {
-    private static final String GUID_PLAYER_NAME = "guid:as.login.offline.widgets.player_name";
-    private static final String GUID_PLAYER_UUID = "guid:as.login.offline.widgets.player_uuid";
+    private static final String GUID_PLAYER_NAME = FieldKey.PLAYER_NAME.value();
+    private static final String GUID_PLAYER_UUID = new FieldKey("playerUuid").value();
 
     // 离线账号不发起网络请求；构造器接收网关仅为统一所有 provider 的构造形态（P1.3）。
     // 即便不使用，也校验注入的网关非空，与依赖注入契约保持一致。
@@ -27,19 +32,22 @@ public class OfflineAccountProvider implements AccountProvider<OfflineAccount> {
     }
 
     @Override
-    public void configure(UIScreen screen) {
-        screen.setTitle("accountsx.account.general.login");
-        screen.putTextInput(GUID_PLAYER_NAME, "accountsx.account.objects.player_name");
-        screen.putTextInput(GUID_PLAYER_UUID, "accountsx.account.objects.player_uuid");
+    public FormSpec form() {
+        return new FormSpec("accountsx.account.general.login", List.of(
+                new FormField.Text(FieldKey.PLAYER_NAME, "accountsx.account.objects.player_name", false, null),
+                new FormField.Text(new FieldKey("playerUuid"), "accountsx.account.objects.player_uuid", false, null)),
+                List.of(
+                        new FormAction("login", "accountsx.account.general.login", true),
+                        new FormAction("close", "accountsx.general.action.close", false)));
     }
 
     @Override
-    public int validate(UIScreen screen, Memory memory) throws IllegalArgumentException {
-        String playerName = screen.getTextInput(GUID_PLAYER_NAME);
+    public ValidationOutcome validate(Memory memory) throws IllegalArgumentException {
+        String playerName = memory.get(GUID_PLAYER_NAME, String.class);
         memory.set(GUID_PLAYER_NAME, playerName);
 
-        String playerUUIDString = screen.getTextInput(GUID_PLAYER_UUID);
-        if (playerUUIDString.isEmpty()) {
+        String playerUUIDString = memory.get(GUID_PLAYER_UUID, String.class);
+        if (playerUUIDString == null || playerUUIDString.isEmpty()) {
             memory.set(GUID_PLAYER_UUID, AccountUUID.ofPlayerName(playerName));
         } else {
             try {
@@ -49,7 +57,7 @@ public class OfflineAccountProvider implements AccountProvider<OfflineAccount> {
             }
         }
 
-        return STATE_IMMEDIATE_CLOSE;
+        return ValidationOutcome.CLOSE_IMMEDIATELY;
     }
 
     @Override

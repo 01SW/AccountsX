@@ -4,7 +4,11 @@ import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FormAction;
+import top.syshub.accountsx.common.ui.form.FormField;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
+import java.util.List;
 
 import java.util.Objects;
 
@@ -19,12 +23,13 @@ public final class EnvironmentAccountProvider implements AccountProvider<Environ
     }
 
     @Override
-    public void configure(UIScreen screen) {
-        throw new UnsupportedOperationException();
+    public FormSpec form() {
+        return new FormSpec("accountsx.account.general.login", List.of(), List.of(
+                new FormAction("close", "accountsx.general.action.close", false)));
     }
 
     @Override
-    public int validate(UIScreen screen, Memory memory) {
+    public ValidationOutcome validate(Memory memory) {
         throw new UnsupportedOperationException();
     }
 

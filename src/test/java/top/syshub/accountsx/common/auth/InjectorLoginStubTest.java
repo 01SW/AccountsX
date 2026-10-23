@@ -148,10 +148,10 @@ class InjectorLoginStubTest {
         }
     }
 
-    private static final String GUID_SERVER = "guid:as.login.injector.widgets.server_url";
-    private static final String GUID_USER = "guid:as.login.injector.widgets.user_name";
-    private static final String GUID_PASSWORD = "guid:as.login.injector.widgets.user_password";
-    private static final String GUID_PLAYER = "guid:as.login.injector.widgets.player_name";
+    private static final String GUID_SERVER = "server";
+    private static final String GUID_USER = "username";
+    private static final String GUID_PASSWORD = "password";
+    private static final String GUID_PLAYER = "playerName";
 
     /** 假 Prompts：吞掉 toast/复制/开浏览器，sleep 直接返回（设备码轮询不真等）。 */
     private static final class FakePrompts implements YggdrasilDeviceCodeFlow.Prompts {

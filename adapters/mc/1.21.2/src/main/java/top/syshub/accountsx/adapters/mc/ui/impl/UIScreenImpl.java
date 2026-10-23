@@ -7,25 +7,38 @@ import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.ui.Memory;
 import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FieldKey;
+import top.syshub.accountsx.common.ui.form.FormAction;
+import top.syshub.accountsx.common.ui.form.FormField;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
 import top.syshub.accountsx.adapters.mc.ui.AccountScreen;
 import top.syshub.accountsx.adapters.mc.ui.ButtonWidget;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 public final class UIScreenImpl implements UIScreen {
+    private final FormSpec form;
+
+    public UIScreenImpl(FormSpec form) {
+        this.form = form;
+    }
     public static void login(Minecraft client, AccountScreen accountScreen, AccountProvider<?> provider) {
-        UIScreenImpl screen = new UIScreenImpl();
-        provider.configure(screen);
+        FormSpec form = provider.form();
+        UIScreenImpl screen = new UIScreenImpl(form);
 
         client.setScreen(screen.bind(accountScreen, provider));
     }
@@ -45,6 +58,9 @@ public final class UIScreenImpl implements UIScreen {
     private String title;
 
     private final Map<String, ValuedWidget<EditBox>> inputs = new LinkedHashMap<>();
+    private final Map<String, EditBox> textInputs = new LinkedHashMap<>();
+    private final Map<String, ButtonWidget> choiceButtons = new LinkedHashMap<>();
+    private final Map<String, String> choiceValues = new LinkedHashMap<>();
 
     @Override
     public void setTitle(String description) {
@@ -73,7 +89,7 @@ public final class UIScreenImpl implements UIScreen {
     public Screen bind(AccountScreen parent, AccountProvider<?> provider) {
         readonly = true;
 
-        return new LoginScreen(Component.translatable(this.title), parent, provider);
+        return new LoginScreen(Component.translatable(form.titleKey()), parent, provider);
     }
 
     private final class LoginScreen extends Screen {
@@ -98,48 +114,99 @@ public final class UIScreenImpl implements UIScreen {
         protected void init() {
             super.init();
 
-            // 将 minecraft 捕获到局部变量：保证 TaskScheduler 回调（在 worker 线程上执行）
-            // 时引用非空，也让静态分析能推断出 schedule / screen 访问不会产生 NullPointerException。
             final Minecraft minecraft = this.minecraft;
             if (minecraft == null) {
                 return;
             }
 
-            int widgetsTop = this.height / 2 - (UIScreenImpl.this.inputs.size() + 1) * 25 / 2;
-            int widgetsLeft = this.width / 2 - 50;
+            int fieldCount = form.fields().size();
+            int actionCount = form.actions().size();
+            int rows = fieldCount + (actionCount > 0 ? 1 : 0);
+            int widgetsTop = this.height / 2 - rows * 25 / 2;
+            int widgetsLeft = this.width / 2 - 100;
 
-            for (ValuedWidget<EditBox> widget : UIScreenImpl.this.inputs.values()) {
-                EditBox tf = new EditBox(minecraft.font, widgetsLeft, widgetsTop, 200, 20, Component.empty());
-                tf.setMaxLength(128);
-                widget.widget = this.addField(tf);
+            for (FormField field : form.fields()) {
+                if (field instanceof FormField.Text text) {
+                    EditBox tf = new EditBox(minecraft.font, widgetsLeft, widgetsTop, 200, 20, Component.empty());
+                    tf.setMaxLength(128);
+                    textInputs.put(text.key().value(), tf);
+                    this.addField(tf);
+                } else if (field instanceof FormField.Choice choice) {
+                    java.util.List<String> values = new java.util.ArrayList<>();
+                    java.util.Map<String, String> labels = new java.util.LinkedHashMap<>();
+                    for (FormField.Choice.ChoiceOption option : choice.options()) {
+                        values.add(option.value());
+                        labels.put(option.value(), option.labelKey());
+                    }
+
+                    String initial = values.isEmpty() ? "" : values.get(0);
+                    if (!values.isEmpty()) {
+                        choiceValues.put(choice.key().value(), initial);
+                    }
+                    net.minecraft.network.chat.Component initialLabel = values.isEmpty()
+                            ? Component.translatable(choice.labelKey())
+                            : Component.translatable(labels.get(initial));
+                    ButtonWidget cb = new ButtonWidget(widgetsLeft, widgetsTop, 200, 20, initialLabel,
+                            widget -> {
+                                String current = choiceValues.getOrDefault(choice.key().value(), initial);
+                                int index = values.indexOf(current);
+                                String next = values.isEmpty() ? "" : values.get((index + 1) % values.size());
+                                if (!values.isEmpty()) {
+                                    choiceValues.put(choice.key().value(), next);
+                                    widget.setMessage(Component.translatable(labels.get(next)));
+                                }
+                            });
+                    choiceButtons.put(choice.key().value(), cb);
+                    this.addField(cb);
+                }
 
                 widgetsTop += 25;
             }
 
-            boolean noInputs = UIScreenImpl.this.inputs.isEmpty();
+            if (!form.actions().isEmpty()) {
+                int buttonWidth = fieldCount == 0 ? 100 : 95;
+                int totalWidth = form.actions().size() * buttonWidth + (form.actions().size() - 1) * 10;
+                int buttonLeft = this.width / 2 - totalWidth / 2;
+                int buttonTop = widgetsTop + 5;
 
-            this.addField(new ButtonWidget(widgetsLeft, widgetsTop, noInputs ? 100 : 95, 20, Component.translatable("accountsx.account.general.login"), widget -> {
-                Memory memory = new DefaultMemory(this);
-
-                int state;
-                try {
-                    state = this.provider.validate(UIScreenImpl.this, memory);
-                } catch (IllegalArgumentException e) {
-                    AccountsX.LOGGER.warn("Invalid account argument.", e);
-                    return;
+                for (FormAction action : form.actions()) {
+                    this.addField(new ButtonWidget(buttonLeft, buttonTop, buttonWidth, 20,
+                            Component.translatable(action.labelKey()),
+                            widget -> handleAction(action, minecraft)));
+                    buttonLeft += buttonWidth + 10;
                 }
+            }
+        }
 
-                switch (state) {
-                    case AccountProvider.STATE_IMMEDIATE_CLOSE -> this.onClose();
-                    case AccountProvider.STATE_HANDLE -> {
+        private void handleAction(FormAction action, Minecraft minecraft) {
+            Memory memory = new DefaultMemory(this);
+
+            for (FormField field : form.fields()) {
+                if (field instanceof FormField.Text text) {
+                    EditBox box = textInputs.get(text.key().value());
+                    memory.set(text.key().value(), box == null ? "" : box.getValue());
+                } else if (field instanceof FormField.Choice choice) {
+                    memory.set(choice.key().value(), choiceValues.getOrDefault(choice.key().value(), ""));
+                }
+            }
+
+            try {
+                ValidationOutcome outcome = provider.validate(memory);
+                switch (outcome) {
+                    case CLOSE_IMMEDIATELY -> this.onClose();
+                    case KEEP_OPEN_AND_HANDLE -> {
                     }
-                    default -> throw new IllegalArgumentException("Unknown state: " + state);
                 }
+            } catch (IllegalArgumentException e) {
+                AccountsX.LOGGER.warn("Invalid account argument.", e);
+                return;
+            }
 
+            if ("login".equals(action.id())) {
                 TaskScheduler.submit(() -> {
                     BaseAccount account;
                     try {
-                        account = this.provider.login(memory);
+                        account = provider.login(memory);
                     } catch (Throwable t) {
                         minecraft.schedule(() -> {
                             if (minecraft.screen == this) {
@@ -160,44 +227,54 @@ public final class UIScreenImpl implements UIScreen {
                         this.parent.syncAccounts();
                     });
                 });
-            }));
-
-            if (noInputs) {
-                this.addField(new ButtonWidget(widgetsLeft, widgetsTop + 25, 100, 20, Component.translatable("accountsx.general.action.close"), widget -> this.onClose()));
-            } else {
-                this.addField(new ButtonWidget(widgetsLeft + 105, widgetsTop, 95, 20, Component.translatable("accountsx.general.action.close"), widget -> this.onClose()));
+            } else if ("close".equals(action.id())) {
+                this.onClose();
             }
         }
-
         @Override
         public void render(@NotNull GuiGraphics context, int mouseX, int mouseY, float delta) {
             assert this.minecraft != null;
 
-            super.renderBackground(context, mouseX, mouseY, delta);
-            super.render(context, mouseX, mouseY, delta);
+        super.renderBackground(context, mouseX, mouseY, delta);
+        super.render(context, mouseX, mouseY, delta);
 
-            int textTop = this.height / 2 - (UIScreenImpl.this.inputs.size() + 1) * 25 / 2 + 5;
+            int textTop = this.height / 2 - (form.fields().size() + (form.actions().isEmpty() ? 0 : 1)) * 25 / 2 + 5;
             int textLeft = this.width / 2 - 170;
 
-            minecraft.font.drawInBatch(
-                    this.title,
-                    (float) this.width / 2 - (float) minecraft.font.width(this.title) / 2, textTop - 40,
-                    0xFFFFFF, true,
-                    context.pose().last().pose(), ((DrawContextAccessor) context).getVertexConsumerProvider(), Font.DisplayMode.NORMAL,
-                    0, 0xF000F0
+            Component title = Component.translatable(form.titleKey());
+            context.drawString(
+                    minecraft.font,
+                    title,
+                    this.width / 2 - minecraft.font.width(title) / 2,
+                    textTop - 40,
+                    0xFFFFFF,
+                    true
             );
 
-            for (ValuedWidget<EditBox> widget : UIScreenImpl.this.inputs.values()) {
-                minecraft.font.drawInBatch(
-                        Component.translatable(widget.description), textLeft, textTop, 0xFFFFFF, true,
-                        context.pose().last().pose(), ((DrawContextAccessor) context).getVertexConsumerProvider(), Font.DisplayMode.NORMAL,
-                        0, 0xF000F0
-                );
+            for (FormField field : form.fields()) {
+                Component label = null;
+                if (field instanceof FormField.Text text) {
+                    label = Component.translatable(text.labelKey());
+                } else if (field instanceof FormField.Choice choice) {
+                    label = Component.translatable(choice.labelKey());
+                } else if (field instanceof FormField.Note note) {
+                    label = Component.translatable(note.textKey());
+                }
+
+                if (label != null) {
+                    context.drawString(
+                            minecraft.font,
+                            label,
+                            textLeft,
+                            textTop,
+                            0xFFFFFF,
+                            true
+                    );
+                }
 
                 textTop += 25;
             }
         }
-
         public <T extends AbstractWidget> T addField(T drawable) {
             this.addRenderableOnly(drawable);
             this.addWidget(drawable);

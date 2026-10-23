@@ -11,7 +11,11 @@ import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.accounts.model.context.AuthPolicy;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FormAction;
+import top.syshub.accountsx.common.ui.form.FormField;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
+import java.util.List;
 
 import java.io.IOException;
 import java.util.Map;
@@ -41,13 +45,15 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
     }
 
     @Override
-    public void configure(UIScreen screen) {
-        screen.setTitle("accountsx.account.general.external");
+    public FormSpec form() {
+        return new FormSpec("accountsx.account.general.external", List.of(), List.of(
+                new FormAction("login", "accountsx.account.general.login", true),
+                new FormAction("close", "accountsx.general.action.close", false)));
     }
 
     @Override
-    public int validate(UIScreen screen, Memory memory) throws IllegalArgumentException {
-        return STATE_HANDLE;
+    public ValidationOutcome validate(Memory memory) throws IllegalArgumentException {
+        return ValidationOutcome.KEEP_OPEN_AND_HANDLE;
     }
 
     @Override

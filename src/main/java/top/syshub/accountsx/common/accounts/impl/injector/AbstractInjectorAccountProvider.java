@@ -18,7 +18,12 @@ import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FieldKey;
+import top.syshub.accountsx.common.ui.form.FormAction;
+import top.syshub.accountsx.common.ui.form.FormField;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
+import java.util.List;
 
 import java.io.IOException;
 import java.util.List;
@@ -36,10 +41,10 @@ import java.util.UUID;
  * 同服务器第二次登录不再发解析/探测请求。两级 UI（先加服再在服下加账号）属 P3.2。</p>
  */
 public abstract class AbstractInjectorAccountProvider<T extends AbstractInjectorAccount> implements AccountProvider<T> {
-    private static final String GUID_SERVER_BASE = "guid:as.login.injector.widgets.server_url";
-    private static final String GUID_USER_NAME = "guid:as.login.injector.widgets.user_name";
-    private static final String GUID_PASSWORD = "guid:as.login.injector.widgets.user_password";
-    private static final String GUID_PLAYER_NAME = "guid:as.login.injector.widgets.player_name";
+    private static final String GUID_SERVER_BASE = FieldKey.SERVER.value();
+    private static final String GUID_USER_NAME = FieldKey.USERNAME.value();
+    private static final String GUID_PASSWORD = FieldKey.PASSWORD.value();
+    private static final String GUID_PLAYER_NAME = FieldKey.PLAYER_NAME.value();
 
     private final String serverBaseTranslationKey;
 
@@ -87,24 +92,27 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     }
 
     @Override
-    public final void configure(UIScreen screen) {
-        screen.setTitle("accountsx.account.general.login");
-        screen.putTextInput(GUID_SERVER_BASE, serverBaseTranslationKey);
-        screen.putTextInput(GUID_USER_NAME, userBaseTranslationKey);
-        screen.putTextInput(GUID_PASSWORD, "accountsx.account.objects.user_password");
-        screen.putTextInput(GUID_PLAYER_NAME, "accountsx.account.objects.player_name");
+    public final FormSpec form() {
+        return new FormSpec("accountsx.account.general.login", List.of(
+                new FormField.Text(FieldKey.SERVER, serverBaseTranslationKey, false, null),
+                new FormField.Text(FieldKey.USERNAME, userBaseTranslationKey, false, null),
+                new FormField.Text(FieldKey.PASSWORD, "accountsx.account.objects.user_password", true, null),
+                new FormField.Text(FieldKey.PLAYER_NAME, "accountsx.account.objects.player_name", false, null)),
+                List.of(
+                        new FormAction("login", "accountsx.account.general.login", true),
+                        new FormAction("close", "accountsx.general.action.close", false)));
     }
 
     @Override
-    public final int validate(UIScreen screen, Memory memory) throws IllegalArgumentException {
-        String serverBase = screen.getTextInput(GUID_SERVER_BASE);
+    public final ValidationOutcome validate(Memory memory) throws IllegalArgumentException {
+        String serverBase = memory.get(GUID_SERVER_BASE, String.class);
         validateServerBaseURL(serverBase);
         memory.set(GUID_SERVER_BASE, serverBase);
-        memory.set(GUID_USER_NAME, screen.getTextInput(GUID_USER_NAME));
-        memory.set(GUID_PASSWORD, screen.getTextInput(GUID_PASSWORD));
-        memory.set(GUID_PLAYER_NAME, screen.getTextInput(GUID_PLAYER_NAME));
+        memory.set(GUID_USER_NAME, memory.get(GUID_USER_NAME, String.class));
+        memory.set(GUID_PASSWORD, memory.get(GUID_PASSWORD, String.class));
+        memory.set(GUID_PLAYER_NAME, memory.get(GUID_PLAYER_NAME, String.class));
 
-        return STATE_IMMEDIATE_CLOSE;
+        return ValidationOutcome.CLOSE_IMMEDIATELY;
     }
 
     @Override

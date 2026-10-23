@@ -2,18 +2,15 @@ package top.syshub.accountsx.common.accounts;
 
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.UIScreen;
+import top.syshub.accountsx.common.ui.form.FormSpec;
+import top.syshub.accountsx.common.ui.form.ValidationOutcome;
 
 import java.io.IOException;
 
 public interface AccountProvider<T extends BaseAccount> {
-    int STATE_IMMEDIATE_CLOSE = 0;
+    FormSpec form();
 
-    int STATE_HANDLE = 1;
-
-    void configure(UIScreen screen);
-
-    int validate(UIScreen screen, Memory memory) throws IllegalArgumentException;
+    ValidationOutcome validate(Memory memory) throws IllegalArgumentException;
 
     AccountContext createAccountContext(T account) throws IOException;
 
