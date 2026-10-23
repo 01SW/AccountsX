@@ -46,6 +46,9 @@ public final class AccountManager {
         repository.initialize(Platforms.getMinecraftPlatform().fromCurrentClient(),
                 FabricLoader.getInstance().getConfigDir().resolve("accountsx"));
 
+        // P3.1：服务器元数据启动预热（串行通道，逐 server 一次；失败标 stale 不阻塞启动）
+        repository.warmAuthServers();
+
         List<BaseAccount> toRefresh = new ArrayList<>();
         for (BaseAccount account : repository.view()) {
             if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {

@@ -14,7 +14,10 @@ import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAcc
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftAccount;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
+import top.syshub.accountsx.common.accounts.impl.injector.OAuthConstants;
 import top.syshub.accountsx.common.adapters.Platforms;
+import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.AuthServers;
 import top.syshub.accountsx.common.storage.ConfigRoot;
 import top.syshub.accountsx.common.storage.ConfigStore;
 import top.syshub.accountsx.common.task.TaskScheduler;
@@ -50,6 +53,9 @@ public final class AccountRepository {
 
     /** 已排队但尚未执行的写任务（合并写用；串行通道保序，volatile 可见性足够）。 */
     private volatile boolean writePending;
+
+    /** 服务器注册表（P3.1）：servers 条目的内存视图 + 元数据缓存；变更经 markDirty 落盘。 */
+    private final AuthServerRegistry authServers = new AuthServerRegistry(Platforms.getHttpGateway(), this::markDirty);
 
     public AccountRepository(ConfigStore store) {
         this.store = Objects.requireNonNull(store, "store");
@@ -93,6 +99,23 @@ public final class AccountRepository {
                 LOGGER.warn("全局配置含无法解析的账号条目，已跳过。", e);
             }
         }
+
+        // 注册表接管 servers（P3.1）：装载 + 补齐固定条目 + 安装到 provider 可见的单例槽。
+        authServers.load(root.servers());
+        AuthServers.install(authServers);
+    }
+
+    /** P3.1：服务器注册表（登录/刷新经 AuthServers.current() 使用）。 */
+    public AuthServerRegistry authServers() {
+        return authServers;
+    }
+
+    /**
+     * 启动预热（P3.1）：在串行通道上逐 server 探测元数据（公钥 / skinDomains / OIDC 端点），
+     * 失败保留旧条目（stale）、不阻塞。之后登录/刷新只读内存。
+     */
+    public void warmAuthServers() {
+        TaskScheduler.submit(() -> authServers.refreshAll(OAuthConstants.OAUTH_CLIENT_IDS));
     }
 
     /**
@@ -253,6 +276,8 @@ public final class AccountRepository {
             String snapshotText;
             synchronized (this) {
                 writePending = false;
+                // 锁序恒为 仓储→注册表：注册表内部的变更回调（markDirty）在注册表锁外触发。
+                authServers.persist(root.servers());
                 snapshot();
                 snapshotText = top.syshub.accountsx.common.utils.NetworkUtils.GSON.toJson(root.raw());
             }

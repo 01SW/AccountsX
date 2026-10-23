@@ -27,7 +27,7 @@ import java.util.UUID;
  * <ul>
  *   <li>{@link #GSON}：跨认证/存储共用的序列化实例（带 {@code UUIDTypeAdapter} + pretty printing）</li>
  *   <li>{@link #readResponse}：响应体 charset 解析（{@link top.syshub.accountsx.common.net.JdkHttpGateway} 内部调用）</li>
- *   <li>{@link #getHeaderIgnoreCase}：响应头大小写无关查找（{@code AuthlibInjectorAccountProvider.transformServerBaseURL} 调用）</li>
+ *   <li>{@link #getHeaderIgnoreCase}：响应头大小写无关查找（{@code YggdrasilServerProbe.resolveApiRoot} 调用）</li>
  *   <li>{@link #resolveLocation}：重定向位置解析（同上）</li>
  * </ul>
  */

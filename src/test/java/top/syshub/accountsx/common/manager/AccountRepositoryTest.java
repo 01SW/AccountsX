@@ -284,6 +284,27 @@ class AccountRepositoryTest {
         assertThat(repository.view().get(0).getAccountStorage().getPlayerName()).isEqualTo("Steve");
     }
 
+    @Test
+    void initialize_installsAuthServerRegistry() throws Exception {
+        Files.createDirectories(global.getParent());
+        String uuid = "069a79f444e94726a5befca90e38aaf5";
+        Files.writeString(global, "{\"version\":4,\"servers\":[{\"type\":\"yggdrasil\",\"apiRoot\":\"https://example.invalid/api/yggdrasil\",\"displayName\":\"Example\"}],"
+                + "\"accounts\":[{\"type\":\"offline\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"" + uuid + "\"}}]}",
+                StandardCharsets.UTF_8);
+
+        AccountRepository repository = new AccountRepository(store(MigrationChain.EMPTY));
+        repository.initialize(null, null);
+
+        // P3.1：注册表装载 servers 条目并补齐固定条目（mojang / offline）
+        assertThat(repository.authServers().byApiRoot("https://example.invalid/api/yggdrasil")).isNotNull();
+        assertThat(repository.authServers().servers()).hasSize(3);
+        // 装载本身不标脏；下一次快照把固定条目写回磁盘
+        repository.markDirtyForTest();
+        awaitWrites(writes, 1, "注册表装载不应额外触发写");
+        JsonObject onDisk = JsonParser.parseString(Files.readString(global, StandardCharsets.UTF_8)).getAsJsonObject();
+        assertThat(onDisk.getAsJsonArray("servers")).hasSize(3);
+    }
+
     // ── 首启动触发迁移 ──────────────────────────────────────────────
 
     @Test

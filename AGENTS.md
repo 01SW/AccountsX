@@ -71,9 +71,10 @@ AccountsX（根项目 / common）
 │   │   │   ├── api/                     # MinecraftPlatform / AuthlibBridge / AccountSession 接口
 │   │   │   ├── Adapters.java            # @Deprecated 转发壳（兼容旧适配器）
 │   │   │   └── Platforms.java           # 反射加载适配器实现（memoize）
+│   │   ├── auth/                        # 认证域（P3.1）：AuthServer/Registry/Metadata + Yggdrasil 探测与登录流程 + AuthServers 单例槽
 │   │   ├── manager/
 │   │   │   ├── AccountManager.java      # 编排（刷新/登录；集合与持久化走 AccountRepository）
-│   │   │   ├── AccountRepository.java   # 账号仓储（集合+current+标脏合并写；启动时可触发配置迁移）
+│   │   │   ├── AccountRepository.java   # 账号仓储（集合+current+标脏合并写；装载并持有 AuthServerRegistry）
 │   │   │   └── AccountWorker.java       # @Deprecated 转发到 TaskScheduler（兼容旧适配器）
 │   │   ├── storage/                     # 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore）
 │   │   │   └── migration/               # Migration / MigrationChain + 标准迁移链（0→1→2→3→4，含 UNIFY_AND_DECOUPLE）
@@ -127,7 +128,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 ### 运行时流程
 
 1. `AccountsX.onInitializeClient` → `AccountManager.initialize` + `MicrosoftConstants.initialize`
-2. Manager 用环境账号 + `AccountRepository` 加载账号列表，在 worker 上刷新非授权账号
+2. Manager 用环境账号 + `AccountRepository` 加载账号列表，在 worker 上刷新非授权账号；同时投递服务器元数据预热（`warmAuthServers` → 串行通道逐 server 探测一次，失败保留旧条目不阻塞）
 3. UI（各 MC 版本的 `AccountScreen`）在**客户端线程**上修改账号
 4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
@@ -141,6 +142,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - 旧版本按 `StandardMigrations` 链升级并回写；未知账号条目跳过但保留。
 - `ENV_DEFAULT` 账号不写入磁盘
 - 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
+- `servers` 由 `AuthServerRegistry`（`common/auth/`）接管：登录/刷新/建会话只读内存缓存（公钥、skinDomains、OIDC 端点），仅在启动预热、加服（登录快捷路径隐式加服）时探测；探测失败保留 stale 条目不阻塞；`mojang` / `offline` 为固定条目（无 `apiRoot`），装载时自动补齐。
 
 ### MC 适配器（`adapters/mc/<version>`）
 
