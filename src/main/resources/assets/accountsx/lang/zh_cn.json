@@ -35,11 +35,14 @@
   "accountsx.config.tooNew.desc": "配置文件由更高版本的 Accounts X 写入，请升级模组；为保护数据已禁止保存。",
   "accountsx.config.tooNew.title": "配置版本高于当前模组",
   "accountsx.general.action.close": "返回",
-  "accountsx.general.action.ok": "我明白了",
   "modmenu.nameTranslation.accountsx": "Accounts X",
   "modmenu.descriptionTranslation.accountsx": "在 Minecraft 中切换账户。",
   "modmenu.nameTranslation.accountsx-adapter-mc": "Accounts X Minecraft 适配器",
   "modmenu.descriptionTranslation.accountsx-adapter-mc": "Accounts X 的 Minecraft 客户端适配器。",
   "modmenu.nameTranslation.accountsx-adapter-authlib": "Accounts X Authlib 适配器",
-  "modmenu.descriptionTranslation.accountsx-adapter-authlib": "Accounts X 的 Authlib 适配器。"
+  "modmenu.descriptionTranslation.accountsx-adapter-authlib": "Accounts X 的 Authlib 适配器。",
+  "accountsx.account.general.add_server": "添加服务器",
+  "accountsx.account.general.server_detail": "服务器详情",
+  "accountsx.account.general.server_list": "服务器列表",
+  "accountsx.account.objects.server_name": "服务器名称"
 }
