@@ -1,0 +1,3 @@
+top/syshub/accountsx/adapters/mc/mixins/MinecraftClientAccessor.java
+top/syshub/accountsx/adapters/mc/mixins/TitleScreenMixin.java
+top/syshub/accountsx/adapters/mc/mixins/YggdrasilUserApiServiceMixin.java
