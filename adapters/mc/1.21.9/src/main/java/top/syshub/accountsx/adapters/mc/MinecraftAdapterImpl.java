@@ -86,7 +86,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void openBrowser(String url) {
-        Util.getPlatform().openUri(url);
+        new PlatformOps().openBrowser(url);
     }
 
     @Override
@@ -103,12 +103,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void copyText(String text) {
-        Minecraft client = Minecraft.getInstance();
-        if (client.isSameThread()) {
-            new ClipboardManager().setClipboard(client.getWindow(), text);
-        } else {
-            client.schedule(() -> copyText(text));
-        }
+        new PlatformOps().copyText(text);
     }
 
     @Override

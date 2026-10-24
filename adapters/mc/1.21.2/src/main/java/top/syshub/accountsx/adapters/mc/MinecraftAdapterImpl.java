@@ -79,7 +79,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void openBrowser(String url) {
-        Util.getPlatform().openUri(url);
+        new PlatformOps().openBrowser(url);
     }
 
     @Override
