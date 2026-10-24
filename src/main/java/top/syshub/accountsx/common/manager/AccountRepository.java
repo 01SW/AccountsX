@@ -17,7 +17,8 @@ import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.accounts.impl.injector.OAuthConstants;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
-import top.syshub.accountsx.common.auth.AuthServers;
+import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
+import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.storage.ConfigRoot;
 import top.syshub.accountsx.common.storage.ConfigStore;
 import top.syshub.accountsx.common.task.TaskScheduler;
@@ -102,10 +103,11 @@ public final class AccountRepository {
 
         // 注册表接管 servers（P3.1）：装载 + 补齐固定条目 + 安装到 provider 可见的单例槽。
         authServers.load(root.servers());
-        AuthServers.install(authServers);
+        AbstractInjectorAccountProvider.installRegistry(authServers);
+        YggdrasilDeviceCodeFlow.installRegistry(authServers);
     }
 
-    /** P3.1：服务器注册表（登录/刷新经 AuthServers.current() 使用）。 */
+    /** P3.1：服务器注册表（登录/刷新经注册表使用）。 */
     public AuthServerRegistry authServers() {
         return authServers;
     }

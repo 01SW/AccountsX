@@ -43,9 +43,12 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
         this.setHeight(bottom - top);
     }
 
+    private final top.syshub.accountsx.common.ui.list.AccountListModel model = new top.syshub.accountsx.common.ui.list.DefaultAccountListModel();
+
     public void syncAccounts() {
         this.clearEntries();
-        for (BaseAccount account : AccountManager.getAccountsView()) {
+        for (top.syshub.accountsx.common.ui.list.AccountRow row : model.rows()) {
+            BaseAccount account = row.account();
             AccountEntry entry = new AccountEntry(account);
             this.addEntry(entry);
 

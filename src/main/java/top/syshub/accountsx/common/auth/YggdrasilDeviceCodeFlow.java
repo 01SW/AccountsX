@@ -18,6 +18,18 @@ import top.syshub.accountsx.common.utils.Threading;
  * （旧启动器写的 servers[] 没有 device 端点、或启动预热时服务器宕过机）。
  */
 public final class YggdrasilDeviceCodeFlow {
+
+    private static volatile AuthServerRegistry registry;
+
+    public static void installRegistry(AuthServerRegistry r) {
+        registry = r;
+    }
+
+    private static AuthServerRegistry registry() {
+        if (registry == null)
+            throw new IllegalStateException("AuthServerRegistry 未注入。");
+        return registry;
+    }
     /** 设备码流程的 UI/等待副作用；P3.1 抽成参数使登录编排可单测（无需 MC 适配器）。 */
     public interface Prompts {
         void toast(String titleKey, String descKey, Object... args);
@@ -126,7 +138,7 @@ public final class YggdrasilDeviceCodeFlow {
         YggdrasilProfiles.Profile profile = readIdTokenProfile(idToken);
         String apiRoot = server.apiRoot();
         if (discovered)
-            AuthServers.current().updateOAuthEndpoints(apiRoot, endpoints);
+            registry().updateOAuthEndpoints(apiRoot, endpoints);
         AvatarService.AvatarKey avatar = AvatarService.fetch(http,
                 apiRoot + "/sessionserver/session/minecraft/profile/", profile.playerUuid());
         return new YggdrasilAuthResult(accessToken, profile.playerName(), profile.playerUuid(),

@@ -28,6 +28,7 @@ dependencies {
     "implementation"(Catalog.notation(project, "guava"))
     "implementation"(Catalog.notation(project, "gson"))
     "compileOnly"(Catalog.notation(project, "slf4j-api"))
+    "testImplementation"(Catalog.notation(project, "slf4j-api"))
     "implementation"(project(":"))
 }
 
@@ -48,4 +49,15 @@ tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
     sourceCompatibility = "17"
     targetCompatibility = "17"
+}
+
+// P5.4：为 authlib 适配器启用测试源集
+tasks.test {
+    useJUnitPlatform()
+}
+
+dependencies {
+    "testImplementation"(Catalog.notation(project, "junit-jupiter"))
+    "testImplementation"(Catalog.notation(project, "assertj-core"))
+    "testRuntimeOnly"(Catalog.notation(project, "junit-platform-launcher"))
 }

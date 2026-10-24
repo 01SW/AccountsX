@@ -16,6 +16,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
+import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
+import top.syshub.accountsx.common.auth.AuthServerRegistry;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
 import top.syshub.accountsx.common.task.TaskScheduler;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * fixture 一律 fake- 前缀，无任何真实凭据。
  */
 class InjectorLoginStubTest {
+    private AuthServerRegistry registry;
     private static final String UUID32 = "069a79f444e94726a5befca90e38aaf5";
 
     private HttpServer server;
@@ -105,13 +108,14 @@ class InjectorLoginStubTest {
             }
         });
         server.start();
-        AuthServers.install(new AuthServerRegistry(JdkHttpGateway.INSTANCE));
+        registry = new AuthServerRegistry(JdkHttpGateway.INSTANCE);
+        AbstractInjectorAccountProvider.installRegistry(registry);
     }
 
     @AfterEach
     void stopStub() {
         server.stop(0);
-        AuthServers.resetForTest();
+        /* registry cleaned up by test teardown */
     }
 
     private static String fakeIdToken() {
@@ -207,13 +211,13 @@ class InjectorLoginStubTest {
         assertThat(count("HEAD /")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/authserver/authenticate")).isEqualTo(2);
 
-        AuthServer server = AuthServers.current().byApiRoot(apiRoot);
+        AuthServer server = registry.byApiRoot(apiRoot);
         assertThat(server.displayName()).isEqualTo("FakeInjector");
         assertThat(server.locator()).isEqualTo(base);
         assertThat(server.oauth().clientId()).isEqualTo("fake-shared-client");
 
         JsonArray out = new JsonArray();
-        AuthServers.current().persist(out);
+        registry.persist(out);
         assertThat(out.asList().stream().map(JsonElement::getAsJsonObject)
                 .anyMatch(j -> apiRoot.equals(j.get("apiRoot").getAsString()))).isTrue();
     }

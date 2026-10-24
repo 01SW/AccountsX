@@ -12,7 +12,7 @@ import top.syshub.accountsx.common.auth.AccountOAuth;
 import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.AuthServerMetadata;
-import top.syshub.accountsx.common.auth.AuthServers;
+import top.syshub.accountsx.common.auth.AuthServerRegistry;
 import top.syshub.accountsx.common.auth.YggdrasilAuthResult;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow;
@@ -35,12 +35,25 @@ import java.util.UUID;
  * <p>网络编排拆到 {@code common/auth}：{@code YggdrasilServerProbe}（API-Location 解析 + 元数据）、
  * {@link YggdrasilPasswordFlow}（密码流）、{@link YggdrasilDeviceCodeFlow}（device-code）。
  * 公钥 / skinDomains / OIDC 端点不再每次登录现取——provider 只查
- * {@link AuthServers#current()} 的内存缓存（启动预热 + 加服时探测，miss 时补测一次）。</p>
+ * {@link AuthServerRegistry} 的内存缓存（启动预热 + 加服时探测，miss 时补测一次）。</p>
  *
  * <p>登录快捷路径（一个表单填服务器 + 凭据）保留：ensure 按 locator 去重，
  * 同服务器第二次登录不再发解析/探测请求。两级 UI（先加服再在服下加账号）属 P3.2。</p>
  */
 public abstract class AbstractInjectorAccountProvider<T extends AbstractInjectorAccount> implements AccountProvider<T> {
+
+    private static volatile AuthServerRegistry registry;
+
+    /** P5.3：注入服务器注册表，替代全局单例。 */
+    public static void installRegistry(AuthServerRegistry r) {
+        registry = r;
+    }
+
+    protected static AuthServerRegistry registry() {
+        if (registry == null)
+            throw new IllegalStateException("AuthServerRegistry 未注入。");
+        return registry;
+    }
     private static final String GUID_SERVER_BASE = FieldKey.SERVER.value();
     private static final String GUID_USER_NAME = FieldKey.USERNAME.value();
     private static final String GUID_PASSWORD = FieldKey.PASSWORD.value();
@@ -77,7 +90,7 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     public final AccountContext createAccountContext(T account) throws IOException {
         String url = account.getServer();
 
-        AuthServerMetadata metadata = AuthServers.current().metadata(url);
+        AuthServerMetadata metadata = registry().metadata(url);
 
         return new AccountContext(new AuthServerContext(
                 url + "/authserver",
@@ -121,7 +134,7 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         String username = memory.get(GUID_USER_NAME, String.class);
 
         // 加服语义：解析 + 探测 + 校验 + 去重；已知的服务器直接复用（不再发任何探测请求）。
-        AuthServer server = AuthServers.current().ensure(serverKind(), locator, OAuthConstants.OAUTH_CLIENT_IDS);
+        AuthServer server = registry().ensure(serverKind(), locator, OAuthConstants.OAUTH_CLIENT_IDS);
 
         YggdrasilAuthResult result;
         if (username.isEmpty())

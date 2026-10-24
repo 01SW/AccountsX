@@ -2,6 +2,7 @@ package top.syshub.accountsx.common.ui.list;
 
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.manager.AccountManager;
+import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.ui.AvatarHandle;
 
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ public class DefaultAccountListModel implements AccountListModel {
         List<AccountRow> result = new ArrayList<>();
         for (BaseAccount account : AccountManager.getAccountsView()) {
             result.add(new AccountRow(
+                    account,
                     account.getAccountStorage().getPlayerName(),
                     account.getAccountStorage().getPlayerName(),
                     account.getAccountType().name(),
@@ -32,7 +34,7 @@ public class DefaultAccountListModel implements AccountListModel {
 
     @Override
     public void onSelect(String accountId) {
-        // 由适配器处理选择逻辑
+        // 由适配器处理选择逻辑（AccountManager.loginAccount + switchAccount）
     }
 
     @Override

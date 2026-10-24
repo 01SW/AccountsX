@@ -6,6 +6,9 @@ import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
 import top.syshub.accountsx.common.manager.AccountManager;
+import top.syshub.accountsx.common.ui.list.AccountListModel;
+import top.syshub.accountsx.common.ui.list.AccountRow;
+import top.syshub.accountsx.common.ui.list.DefaultAccountListModel;
 import top.syshub.accountsx.common.task.TaskScheduler;
 import org.jetbrains.annotations.Nullable;
 
@@ -41,9 +44,12 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
         this.setHeight(bottom - top);
     }
 
+    private final top.syshub.accountsx.common.ui.list.AccountListModel model = new top.syshub.accountsx.common.ui.list.DefaultAccountListModel();
+
     public void syncAccounts() {
         this.clearEntries();
-        for (BaseAccount account : AccountManager.getAccountsView()) {
+        for (top.syshub.accountsx.common.ui.list.AccountRow row : model.rows()) {
+            BaseAccount account = row.account();
             AccountEntry entry = new AccountEntry(account);
             this.addEntry(entry);
 
