@@ -34,8 +34,11 @@ public class YggdrasilUserApiServiceMixin {
     private Environment environment;
 
     @Unique
+    @Unique
+    private static final String AUTHLIB_INJECTOR_NAME = "Authlib-Injector";
+
     private boolean isAuthlibInjector() {
-        return environment.name().equals("Authlib-Injector");
+        return AUTHLIB_INJECTOR_NAME.equals(environment.name());
     }
 
     @Inject(
