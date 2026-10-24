@@ -4,7 +4,14 @@ import com.mojang.authlib.exceptions.AuthenticationException;
 import com.mojang.authlib.minecraft.SessionService;
 import com.mojang.authlib.minecraft.TelemetrySession;
 import com.mojang.authlib.minecraft.UserApiService;
+import com.mojang.authlib.SignatureState;
+import com.mojang.authlib.minecraft.MinecraftProfileTexture;
+import com.mojang.authlib.minecraft.MinecraftProfileTextures;
 import com.mojang.authlib.properties.Property;
+import com.mojang.util.UUIDTypeAdapter;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 import com.mojang.authlib.services.*;
 import com.mojang.authlib.services.request.AbuseReportRequest;
 import com.mojang.authlib.services.response.KeyPairResponse;
@@ -45,34 +52,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  */
 public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImpl> {
 
-    // 1.1 修复：原先在 static 块里做网络 I/O，联网失败会抛 ExceptionInInitializerError。
-    // 改为懒加载 + 失败降级为仅 Mojang 默认白名单。
-    private static volatile AuthSecurityContext selectedSecurityField;
-
     private static final Logger LOGGER = LoggerFactory.getLogger(AuthlibAdapterImpl.class);
-
-    /** 懒加载并 memoize 的默认皮肤安全上下文；首次访问时才联网获取 Microsoft 公钥。 */
-    public static AuthSecurityContext selectedSecurity() {
-        AuthSecurityContext ctx = selectedSecurityField;
-        if (ctx == null) {
-            synchronized (AuthlibAdapterImpl.class) {
-                ctx = selectedSecurityField;
-                if (ctx == null) {
-                    selectedSecurityField = ctx = computeDefaultSecurity();
-                }
-            }
-        }
-        return ctx;
-    }
-
-    private static AuthSecurityContext computeDefaultSecurity() {
-        try {
-            return MicrosoftConstants.computeMicrosoftPublicKeys();
-        } catch (IOException e) {
-            LOGGER.warn("无法获取 Microsoft 公钥，降级为仅 Mojang 默认皮肤白名单。", e);
-            return new AuthSecurityContext(List.of(), List.of());
-        }
-    }
 
     @Override
     public AccountSessionImpl createAccountProfile(BaseAccount.AccountStorage storage, AccountContext context, Proxy proxy) throws IOException {
@@ -90,9 +70,6 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
         DiscoveryResponse discoveryResponse = buildDiscovery(server);
         MinecraftServicesDiscoveryService discovery = ofDiscoveryService(proxy, discoveryResponse);
         SessionService sessionService = ofSessionService(proxy, discovery, context.security());
-
-        // 登录时用该账号自身的安全上下文覆盖默认（2.3 竞态留待 P4）
-        selectedSecurityField = context.security();
 
         boolean lenient = !isMojangProd(server);
         UserApiService userAPIService = switch (context.policy()) {
@@ -209,6 +186,67 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
      * SessionService 构造器是 protected，子类在任意包均可调用；
      * 借此把 AuthSecurityContext 的公钥装进 ServicesKeySet，替代旧版字段注入。
      */
+    private static final class PolicySessionService extends MinecraftServicesSessionService {
+        private static final Logger LOGGER = LoggerFactory.getLogger(PolicySessionService.class);
+
+        private static final MethodHandle GET_PROPERTY_SIGNATURE_STATE = UnsafeVM.prepareMH(
+                "MinecraftServicesSessionService::getPropertySignatureState", lookup -> lookup.findVirtual(
+                        MinecraftServicesSessionService.class,
+                        "getPropertySignatureState",
+                        MethodType.methodType(SignatureState.class, Property.class)
+                )
+        );
+
+        private final AuthSecurityContext security;
+        private final Gson gson = new GsonBuilder().registerTypeAdapter(UUID.class, new UUIDTypeAdapter()).create();
+
+        PolicySessionService(ServicesKeySet keySet, Proxy proxy, MinecraftServicesDiscoveryService discovery, AuthSecurityContext security) {
+            super(keySet, proxy, discovery);
+            this.security = security;
+        }
+
+        @Override
+        public MinecraftProfileTextures unpackTextures(Property packedTextures) {
+            String value = packedTextures.value();
+            SignatureState signatureState;
+            try {
+                signatureState = (SignatureState) GET_PROPERTY_SIGNATURE_STATE.invoke(this, packedTextures);
+            } catch (Throwable t) {
+                throw UnsafeVM.fail("MinecraftServicesSessionService::getPropertySignatureState", t);
+            }
+
+            com.mojang.authlib.services.response.MinecraftTexturesPayload result;
+            try {
+                String json = new String(Base64.getDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
+                result = this.gson.fromJson(json, com.mojang.authlib.services.response.MinecraftTexturesPayload.class);
+            } catch (final JsonParseException | IllegalArgumentException e) {
+                LOGGER.error("Could not decode textures payload", e);
+                return MinecraftProfileTextures.EMPTY;
+            }
+
+            if (result == null || result.textures() == null || result.textures().isEmpty()) {
+                return MinecraftProfileTextures.EMPTY;
+            }
+
+            for (MinecraftProfileTexture entry : result.textures().values()) {
+                String url = entry.getUrl();
+                if (security.shouldBlockSkinUrl(url)) {
+                    LOGGER.error("Textures payload contains blocked domain: {}", url);
+                    return MinecraftProfileTextures.EMPTY;
+                }
+            }
+
+            java.util.Map<MinecraftProfileTexture.Type, MinecraftProfileTexture> textures = result.textures();
+
+            return new MinecraftProfileTextures(
+                    textures.get(MinecraftProfileTexture.Type.SKIN),
+                    textures.get(MinecraftProfileTexture.Type.CAPE),
+                    textures.get(MinecraftProfileTexture.Type.ELYTRA),
+                    signatureState
+            );
+        }
+    }
+
     private static final class KeyedSessionService extends MinecraftServicesSessionService {
         KeyedSessionService(ServicesKeySet keySet, Proxy proxy, MinecraftServicesDiscoveryService discovery) {
             super(keySet, proxy, discovery);
@@ -217,7 +255,7 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
 
     private static SessionService ofSessionService(Proxy proxy, MinecraftServicesDiscoveryService discovery, AuthSecurityContext security) {
         ServicesKeySet keySet = customKeySet(security);
-        return new KeyedSessionService(keySet, proxy, discovery);
+        return new PolicySessionService(keySet, proxy, discovery, security);
     }
 
     private static ServicesKeySet customKeySet(AuthSecurityContext security) {

@@ -14,6 +14,7 @@ import top.syshub.accountsx.common.adapters.api.MinecraftPlatform;
 import java.net.Proxy;
 import java.util.Objects;
 import java.util.Optional;
+import java.io.File;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.Util;
@@ -27,7 +28,11 @@ import net.minecraft.client.multiplayer.chat.report.ReportingContext;
 import net.minecraft.client.resources.SkinManager;
 import net.minecraft.client.telemetry.ClientTelemetryManager;
 import net.minecraft.network.chat.Component;
+import com.mojang.authlib.minecraft.MinecraftSessionService;
 import net.minecraft.server.Services;
+import net.minecraft.server.players.CachedUserNameToIdResolver;
+import net.minecraft.server.players.ProfileResolver;
+import net.minecraft.server.players.UserNameToIdResolver;
 
 public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImpl> {
     @Override
@@ -52,7 +57,10 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
         User s = new User(playerName, playerUUID, accessToken, Optional.empty(), Optional.empty());
 
         Minecraft client = Minecraft.getInstance();
-        Services apiServices = Services.create(authenticationService, client.gameDirectory);
+        MinecraftSessionService sessionService = session.sessionService();
+        UserNameToIdResolver nameToIdCache = new CachedUserNameToIdResolver(authenticationService.createProfileRepository(), new File(client.gameDirectory, "usercache.json"));
+        ProfileResolver profileResolver = new ProfileResolver.Cached(sessionService, nameToIdCache);
+        Services apiServices = new Services(sessionService, authenticationService.getServicesKeySet(), authenticationService.createProfileRepository(), nameToIdCache, profileResolver);
         ((MinecraftClientAccessor) client).setApiServices(apiServices);
         ((MinecraftClientAccessor) client).setSession(s);
         ((MinecraftClientAccessor) client).setGameProfileFuture(CompletableFuture.completedFuture(profileResult));

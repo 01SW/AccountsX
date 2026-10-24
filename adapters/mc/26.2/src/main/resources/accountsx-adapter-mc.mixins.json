@@ -6,7 +6,6 @@
   "client": [
     "MinecraftClientAccessor",
     "PlayerSkinProviderMixin",
-    "TextureUrlCheckerMixin",
     "TitleScreenMixin",
     "YggdrasilUserApiServiceMixin"
   ],

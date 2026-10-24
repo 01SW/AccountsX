@@ -1,14 +1,21 @@
 package top.syshub.accountsx.authlib;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 import com.mojang.authlib.Environment;
 import com.mojang.authlib.HttpAuthenticationService;
+import com.mojang.authlib.SignatureState;
 import com.mojang.authlib.exceptions.AuthenticationException;
+import com.mojang.authlib.minecraft.MinecraftProfileTexture;
+import com.mojang.authlib.minecraft.MinecraftProfileTextures;
 import com.mojang.authlib.minecraft.MinecraftSessionService;
 import com.mojang.authlib.minecraft.UserApiService;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.yggdrasil.*;
+import com.mojang.authlib.yggdrasil.response.MinecraftTexturesPayload;
+import com.mojang.util.UUIDTypeAdapter;
 import top.syshub.accountsx.common.accounts.BaseAccount;
-import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftConstants;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.accounts.model.context.AuthSecurityContext;
 import top.syshub.accountsx.common.adapters.api.AuthlibBridge;
@@ -18,42 +25,18 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodType;
 import java.net.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImpl> {
 
-    // 1.1 修复：原先在 static 块里做网络 I/O，联网失败（断网/被墙/Mojang 抖动）会抛
-    // ExceptionInInitializerError 导致整个模组不可用（连离线账号都用不了）。改为懒加载 +
-    // 失败降级为仅 Mojang 默认白名单（AuthSecurityContext 默认构造使用 MOJANG_DEFAULT）。
-    private static volatile AuthSecurityContext selectedSecurityField;
-
     private static final Logger LOGGER = LoggerFactory.getLogger(AuthlibAdapterImpl.class);
-
-    /** 懒加载并 memoize 的默认皮肤安全上下文；首次访问时才联网获取 Microsoft 公钥。 */
-    public static AuthSecurityContext selectedSecurity() {
-        AuthSecurityContext ctx = selectedSecurityField;
-        if (ctx == null) {
-            synchronized (AuthlibAdapterImpl.class) {
-                ctx = selectedSecurityField;
-                if (ctx == null) {
-                    selectedSecurityField = ctx = computeDefaultSecurity();
-                }
-            }
-        }
-        return ctx;
-    }
-
-    private static AuthSecurityContext computeDefaultSecurity() {
-        try {
-            return MicrosoftConstants.computeMicrosoftPublicKeys();
-        } catch (IOException e) {
-            LOGGER.warn("无法获取 Microsoft 公钥，降级为仅 Mojang 默认皮肤白名单。", e);
-            return new AuthSecurityContext(List.of(), List.of());
-        }
-    }
 
     @Override
     public AccountSessionImpl createAccountProfile(BaseAccount.AccountStorage storage, AccountContext context, Proxy proxy) throws IOException {
@@ -73,9 +56,7 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
                     context.server().name()
             );
             YggdrasilAuthenticationService service = ofYggdrasilAuthenticationService(proxy, env, context.security());
-            MinecraftSessionService sessionService = new YggdrasilMinecraftSessionService(service.getServicesKeySet(), service.getProxy(), env) {};
-            // 登录时用该账号自身的安全上下文覆盖默认（2.3 竞态留待 P4）
-            selectedSecurityField = context.security();
+            MinecraftSessionService sessionService = new PolicySessionService(service.getServicesKeySet(), service.getProxy(), env, context.security());
 
             UserApiService userAPIService = switch (context.policy()) {
                 case ONLINE -> service.createUserApiService(storage.getAccessToken());
@@ -142,6 +123,67 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
 
     private ProfileResult computeProfile(BaseAccount.AccountStorage storage, MinecraftSessionService sessionService) {
         return sessionService.fetchProfile(storage.getPlayerUUID(), true);
+    }
+
+    static final class PolicySessionService extends YggdrasilMinecraftSessionService {
+        private static final Logger LOGGER = LoggerFactory.getLogger(PolicySessionService.class);
+
+        private static final MethodHandle GET_PROPERTY_SIGNATURE_STATE = UnsafeVM.prepareMH(
+                "YggdrasilMinecraftSessionService::getPropertySignatureState", lookup -> lookup.findVirtual(
+                        YggdrasilMinecraftSessionService.class,
+                        "getPropertySignatureState",
+                        MethodType.methodType(SignatureState.class, Property.class)
+                )
+        );
+
+        private final AuthSecurityContext security;
+        private final Gson gson = new GsonBuilder().registerTypeAdapter(UUID.class, new UUIDTypeAdapter()).create();
+
+        PolicySessionService(ServicesKeySet keySet, Proxy proxy, Environment env, AuthSecurityContext security) {
+            super(keySet, proxy, env);
+            this.security = security;
+        }
+
+        @Override
+        public MinecraftProfileTextures unpackTextures(Property packedTextures) {
+            String value = packedTextures.value();
+            SignatureState signatureState;
+            try {
+                signatureState = (SignatureState) GET_PROPERTY_SIGNATURE_STATE.invoke(this, packedTextures);
+            } catch (Throwable t) {
+                throw UnsafeVM.fail("YggdrasilMinecraftSessionService::getPropertySignatureState", t);
+            }
+
+            MinecraftTexturesPayload result;
+            try {
+                String json = new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+                result = this.gson.fromJson(json, MinecraftTexturesPayload.class);
+            } catch (final JsonParseException | IllegalArgumentException e) {
+                LOGGER.error("Could not decode textures payload", e);
+                return MinecraftProfileTextures.EMPTY;
+            }
+
+            if (result == null || result.textures() == null || result.textures().isEmpty()) {
+                return MinecraftProfileTextures.EMPTY;
+            }
+
+            for (MinecraftProfileTexture entry : result.textures().values()) {
+                String url = entry.getUrl();
+                if (security.shouldBlockSkinUrl(url)) {
+                    LOGGER.error("Textures payload contains blocked domain: {}", url);
+                    return MinecraftProfileTextures.EMPTY;
+                }
+            }
+
+            Map<MinecraftProfileTexture.Type, MinecraftProfileTexture> textures = result.textures();
+
+            return new MinecraftProfileTextures(
+                    textures.get(MinecraftProfileTexture.Type.SKIN),
+                    textures.get(MinecraftProfileTexture.Type.CAPE),
+                    textures.get(MinecraftProfileTexture.Type.ELYTRA),
+                    signatureState
+            );
+        }
     }
 
     private record DefaultServicesKeyInfo(PublicKey publicKey) implements ServicesKeyInfo {

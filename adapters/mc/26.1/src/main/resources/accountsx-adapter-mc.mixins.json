@@ -7,7 +7,6 @@
     "MinecraftClientAccessor",
     "PlayerSkinProviderMixin",
     "SplashTextResourceSupplierAccessor",
-    "TextureUrlCheckerMixin",
     "TitleScreenMixin",
     "YggdrasilUserApiServiceMixin"
   ],
