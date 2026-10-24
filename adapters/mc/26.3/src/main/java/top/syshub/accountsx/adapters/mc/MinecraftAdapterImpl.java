@@ -91,8 +91,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void openBrowser(String url) {
-        // 26.3 起 Util.getPlatform().openUri 已移除，改走 Blaze3D.openUri
-        Blaze3D.openUri(java.net.URI.create(url));
+        new PlatformOps().openBrowser(url);
     }
 
     @Override
@@ -109,13 +108,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void copyText(String text) {
-        Minecraft client = Minecraft.getInstance();
-        if (client.isSameThread()) {
-            // 26.3 起 ClipboardManager 走 SDL，不再接收 Window
-            new ClipboardManager().setClipboard(text);
-        } else {
-            client.schedule(() -> copyText(text));
-        }
+        new PlatformOps().copyText(text);
     }
 
     @Override
