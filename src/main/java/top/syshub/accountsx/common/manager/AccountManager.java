@@ -39,6 +39,10 @@ public final class AccountManager {
         return repository().getCurrent();
     }
 
+    public static top.syshub.accountsx.common.auth.AuthServerRegistry authServers() {
+        return repository().authServers();
+    }
+
     public static void initialize() {
         ConfigStore store = JsonConfigStore.createDefault(StandardMigrations.chain(NetworkUtils.GSON));
         repository = new AccountRepository(store);

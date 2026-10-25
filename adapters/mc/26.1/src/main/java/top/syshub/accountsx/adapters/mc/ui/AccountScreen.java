@@ -6,6 +6,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.NonNull;
 import top.syshub.accountsx.adapters.mc.ui.impl.UIScreenImpl;
+import top.syshub.accountsx.adapters.mc.ui.ServerScreen;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
