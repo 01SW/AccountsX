@@ -70,6 +70,17 @@ public class AccountScreen extends Screen {
                 button -> this.onClose()
         ));
 
+        this.addField(new ButtonWidget(
+                LAYOUT_HORIZONTAL_SPACING, LAYOUT_VERTICAL_SPACING + LAYOUT_BUTTON_H + 4,
+                LAYOUT_TOOL_BAR_W, LAYOUT_BUTTON_H,
+                Component.translatable("accountsx.account.general.server_list"),
+                button -> {
+                    assert this.minecraft != null;
+
+                    this.minecraft.setScreen(new ServerScreen(this));
+                }
+        ));
+
         int y = LAYOUT_TOOL_BAR_ADD_ACCOUNT_Y + 10;
         for (AccountType type : AccountType.CONFIGURABLE_VALUES) {
             this.addField(new ButtonWidget(
