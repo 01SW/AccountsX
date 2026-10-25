@@ -2,7 +2,6 @@ package top.syshub.accountsx.common.ui.list;
 
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.manager.AccountManager;
-import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.ui.AvatarHandle;
 
 import java.util.ArrayList;
