@@ -203,8 +203,8 @@ class StandardMigrationsTest {
         assertThat(united.has("avatar")).isFalse();
         assertThat(Files.readAllBytes(avatarDir.resolve(expectedKey + ".png"))).isEqualTo(png);
 
-        // servers：3 个真实 + 固定 mojang / offline 两条
-        assertThat(out.getAsJsonArray("servers")).hasSize(5);
+        // servers：3 个真实（2 yggdrasil + 1 united），无 builtin mojang/offline
+        assertThat(out.getAsJsonArray("servers")).hasSize(3);
         JsonObject lsServer = findServer(out, "https://littleskin.cn/api/yggdrasil");
         assertThat(lsServer.get("displayName").getAsString()).isEqualTo("LittleSkin");
         assertThat(lsServer.getAsJsonObject("oauth").get("clientId").getAsString()).isEqualTo("1214");
@@ -282,8 +282,8 @@ class StandardMigrationsTest {
         // 重复的 Steve 被跳过，Bob 与 ygg Alex 追加；全局已有未知字段保留
         assertThat(out.getAsJsonArray("accounts")).hasSize(3);
         assertThat(out.getAsJsonObject("extra").get("future").getAsBoolean()).isTrue();
-        // servers：mojang 原有、ygg server 新增、固定 offline 补齐（mojang 不重复）
-        assertThat(out.getAsJsonArray("servers")).hasSize(3);
+        // servers：mojang 原有、ygg server 新增（offline 不再补齐）
+        assertThat(out.getAsJsonArray("servers")).hasSize(2);
         assertThat(findServer(out, "https://example.invalid/api/yggdrasil").get("type").getAsString()).isEqualTo("yggdrasil");
     }
 
@@ -321,7 +321,7 @@ class StandardMigrationsTest {
         JsonObject out = new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
 
         assertThat(out.getAsJsonArray("accounts")).isEmpty();
-        assertThat(out.getAsJsonArray("servers")).hasSize(2); // 固定 mojang / offline
+        assertThat(out.getAsJsonArray("servers")).hasSize(0); // 无 builtin mojang/offline
         assertThat(Files.exists(instanceDir.resolve("accounts.json.migrated"))).isTrue();
     }
 
@@ -340,7 +340,7 @@ class StandardMigrationsTest {
         assertThat(out.get("version").getAsInt()).isEqualTo(ConfigStore.CURRENT_VERSION);
         // INJECTOR 在 0→1 删除、BOGUS 在 1→2 跳过；2→3 搬载荷、3→4 并入全局并清理
         assertThat(out.getAsJsonArray("accounts")).hasSize(2);
-        assertThat(out.getAsJsonArray("servers")).hasSize(2);
+        assertThat(out.getAsJsonArray("servers")).hasSize(0);
         assertThat(Files.exists(global)).isTrue();
         assertThat(Files.exists(legacyHome)).isFalse();
     }

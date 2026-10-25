@@ -79,13 +79,14 @@ public final class AuthServerRegistry {
     public synchronized void load(JsonArray array) {
         servers.clear();
         metadata.clear();
-        for (AuthServer server : AuthServer.readAll(array))
+        for (AuthServer server : AuthServer.readAll(array)) {
+            // builtin kind（mojang / offline）不进入 servers 列表
+            if (server.kind().builtin())
+                continue;
             servers.put(server.key(), server);
-        // 补齐固定条目（mojang / offline）。不触发 onChange：装载是只读视图构建，
-        // 合成条目在仓储下一次快照写回时自然落盘（load 即标脏会让"仅变更才写"的测试与语义都脏）。
-        for (AuthServerKind kind : List.of(AuthServerKind.MOJANG, AuthServerKind.OFFLINE)) {
-            servers.putIfAbsent(kind.v4type(), new AuthServer(null, kind, null, null, null, 0L));
         }
+        // mojang / offline 是 builtin kind，不进入 servers 列表（它们没有任何可配置内容）。
+        // byApiRoot 对 builtin 返回 null；createAccountContext 对应类型不查注册表。
     }
 
     /**
@@ -125,16 +126,13 @@ public final class AuthServerRegistry {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(locator, "locator");
         if (kind.builtin()) {
+            // builtin kind 不落 servers 列表；返回合成条目，不持久化。
             synchronized (this) {
                 AuthServer existing = servers.get(kind.v4type());
                 if (existing != null)
                     return existing;
             }
-            AuthServer builtin = new AuthServer(null, kind, null, null, null, 0L);
-            synchronized (this) {
-                servers.putIfAbsent(kind.v4type(), builtin);
-                return servers.get(kind.v4type());
-            }
+            return new AuthServer(null, kind, null, null, null, 0L);
         }
         String trimmed = locator.trim();
         // 同 locator 同 kind 已知 → 连 API-Location 解析都省掉（登录快捷路径每次都带 locator，

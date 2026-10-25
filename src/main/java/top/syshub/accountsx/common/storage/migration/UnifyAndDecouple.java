@@ -122,8 +122,7 @@ public final class UnifyAndDecouple implements Migration {
         }
         LOGGER.info("并入 {} 个账号，其中 {} 个已存在被跳过。", added, skipped);
 
-        ensureServerKind(outServers, "mojang");
-        ensureServerKind(outServers, "offline");
+        // mojang / offline 是 builtin kind，不写入 servers 列表。
 
         out.add("accounts", outAccounts);
         out.add("servers", outServers);

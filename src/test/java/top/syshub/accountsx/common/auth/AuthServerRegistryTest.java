@@ -171,7 +171,7 @@ class AuthServerRegistryTest {
         stored.add(JsonParser.parseString("{\"type\":\"mojang\"}"));
         registry.load(stored);
 
-        assertThat(registry.servers()).hasSize(3); // + offline 补齐
+        assertThat(registry.servers()).hasSize(1); // builtin (mojang/offline) 不再落 servers
         assertThat(registry.byApiRoot(API_ROOT).oauth().clientId()).isEqualTo("fake-1214");
         assertThat(registry.byApiRoot(API_ROOT).oauth().deviceAuthorizationEndpoint()).isNull();
 
@@ -184,11 +184,10 @@ class AuthServerRegistryTest {
                 .findFirst().orElseThrow();
         assertThat(ygg.get("oauth").getAsJsonObject().get("tokenEndpoint").getAsString())
                 .isEqualTo("http://injector.test/oauth/token");
-        JsonObject mojang = out.asList().stream()
+        // mojang 是 builtin kind，不再写入 servers 列表
+        assertThat(out.asList().stream()
                 .map(JsonElement::getAsJsonObject)
-                .filter(j -> "mojang".equals(j.get("type").getAsString()))
-                .findFirst().orElseThrow();
-        assertThat(mojang.has("apiRoot")).isFalse();
+                .noneMatch(j -> "mojang".equals(j.get("type").getAsString()))).isTrue();
         // 未建模字段原样回写：新→旧方向的字段不能被注册表吞掉
         assertThat(ygg.get("futureField").getAsString()).isEqualTo("keep-me");
     }
