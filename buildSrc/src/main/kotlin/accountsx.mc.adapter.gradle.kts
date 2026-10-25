@@ -61,20 +61,25 @@ val generatedSourcesDir = layout.buildDirectory.dir("generated/adapter-sources/m
 val provenanceReportDir = layout.buildDirectory.dir("reports/adapter-sources")
 
 val prepareAdapterSources = tasks.register("prepareAdapterSources") {
+    val rootDirFile: File = rootDir
+    val adapterVersion: String = adapter.version
+
+    notCompatibleWithConfigurationCache("prepareAdapterSources captures script object references")
+
     group = "build"
     description = "Resolve effective Java sources from the version chain"
 
-    val matrix = AdapterMatrix.load(rootDir)
-    val lineage = matrix.mc.subList(0, matrix.mc.indexOfFirst { it.version == adapter.version } + 1).map { it.version }
+    val matrix = AdapterMatrix.load(rootDirFile)
+    val lineage = matrix.mc.subList(0, matrix.mc.indexOfFirst { it.version == adapterVersion } + 1).map { it.version }
 
     inputs.property("targetVersion", adapter.version)
     inputs.property("lineage", lineage)
     for (v in lineage) {
-        val dir = rootDir.resolve("adapters/mc/$v/src/main/java")
+        val dir = rootDirFile.resolve("adapters/mc/$v/src/main/java")
         if (dir.isDirectory) {
             inputs.dir(dir)
         }
-        val removals = rootDir.resolve("adapters/mc/$v/source-removals.txt")
+        val removals = rootDirFile.resolve("adapters/mc/$v/source-removals.txt")
         if (removals.isFile) {
             inputs.file(removals)
         }
@@ -84,7 +89,8 @@ val prepareAdapterSources = tasks.register("prepareAdapterSources") {
     outputs.dir(provenanceReportDir)
 
     doLast {
-        val resolved = AdapterSourceResolver.resolve(matrix, rootDir, adapter.version)
+        val matrix = AdapterMatrix.load(rootDirFile)
+        val resolved = AdapterSourceResolver.resolve(matrix, rootDirFile, adapterVersion)
 
         val outDir = generatedSourcesDir.get().asFile
         outDir.deleteRecursively()
