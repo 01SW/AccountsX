@@ -42,7 +42,12 @@
   "modmenu.nameTranslation.accountsx-adapter-authlib": "Accounts X Authlib 适配器",
   "modmenu.descriptionTranslation.accountsx-adapter-authlib": "Accounts X 的 Authlib 适配器。",
   "accountsx.account.general.add_server": "添加服务器",
-  "accountsx.account.general.server_detail": "服务器详情",
-  "accountsx.account.general.server_list": "服务器列表",
-  "accountsx.account.objects.server_name": "服务器名称"
+  "accountsx.account.filter.all": "全部账户",
+  "accountsx.account.filter.microsoft": "微软账户",
+  "accountsx.account.filter.offline": "离线账户",
+  "accountsx.account.general.add_auth_server": "添加认证服务器",
+  "accountsx.account.general.server_url": "认证服务器地址",
+  "accountsx.account.server.probing": "正在探测服务器 ...",
+  "accountsx.account.server.fail": "添加失败：%s",
+  "accountsx.account.server.fail.empty": "请填写认证服务器地址"
 }
