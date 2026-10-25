@@ -295,14 +295,14 @@ class AccountRepositoryTest {
         AccountRepository repository = new AccountRepository(store(MigrationChain.EMPTY));
         repository.initialize(null, null);
 
-        // P3.1：注册表装载 servers 条目并补齐固定条目（mojang / offline）
+        // P3.1：注册表装载 servers 条目（builtin mojang/offline 不再补齐）
         assertThat(repository.authServers().byApiRoot("https://example.invalid/api/yggdrasil")).isNotNull();
-        assertThat(repository.authServers().servers()).hasSize(3);
+        assertThat(repository.authServers().servers()).hasSize(1);
         // 装载本身不标脏；下一次快照把固定条目写回磁盘
         repository.markDirtyForTest();
         awaitWrites(writes, 1, "注册表装载不应额外触发写");
         JsonObject onDisk = JsonParser.parseString(Files.readString(global, StandardCharsets.UTF_8)).getAsJsonObject();
-        assertThat(onDisk.getAsJsonArray("servers")).hasSize(3);
+        assertThat(onDisk.getAsJsonArray("servers")).hasSize(1);
     }
 
     // ── 首启动触发迁移 ──────────────────────────────────────────────
