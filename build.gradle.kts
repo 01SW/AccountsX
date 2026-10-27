@@ -554,7 +554,29 @@ abstract class VerifyUniversalJar : DefaultTask() {
                                 "Nested jar '$filePath': class '$className' ($classPath) not found in jar"
                             }
                         }
-                    }
+
+                        // 每个 mixin 配置列出的类必须在 jar 内存在：源码回落搬走了文件却漏改配置时，
+                        // 游戏只会在启动时静默忽略，构建期检查才能拦住。
+                        val mixinConfigs = nestedZip.entries().asSequence()
+                            .filter { it.name.endsWith(".mixins.json") }.toList()
+                        for (mixinConfig in mixinConfigs) {
+                            val mixinJson = nestedZip.getInputStream(mixinConfig).bufferedReader().use {
+                                Gson().fromJson(it, JsonObject::class.java)
+                            }
+                            val mixinPackage = mixinJson.get("package")?.asString ?: continue
+                            for (section in listOf("mixins", "client", "server")) {
+                                val entries = mixinJson.getAsJsonArray(section) ?: continue
+                                for (element in entries) {
+                                    val name = element.asString
+                                    val fqcn = if (name.startsWith(".")) mixinPackage + name else mixinPackage + "." + name
+                                    val mixinPath = fqcn.replace('.', '/') + ".class"
+                                    require(nestedZip.getEntry(mixinPath) != null) {
+                                        "Nested jar '$filePath': mixin '" + name + "' listed in " +
+                                            mixinConfig.name + " but '" + mixinPath + "' not found"
+                                    }
+                                }
+                            }
+                        }                    }
                 } finally {
                     // Clean up temp files
                     tempJar.toFile().delete()
