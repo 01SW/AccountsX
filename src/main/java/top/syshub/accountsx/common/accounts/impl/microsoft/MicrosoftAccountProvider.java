@@ -20,6 +20,7 @@ import java.util.List;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 import static top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftConstants.SESSION;
 import top.syshub.accountsx.common.utils.AvatarService;
@@ -56,6 +57,10 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         return ValidationOutcome.KEEP_OPEN_AND_HANDLE;
     }
 
+    /** 设备码一次性的取码结果：UI 负责展示与打开浏览器。 */
+    public record DeviceCode(String deviceCode, String userCode, String verificationUri, int interval, int expiresIn) {
+    }
+
     @Override
     public MicrosoftAccount login(Memory memory) throws IOException, CancellationException {
         if (memory.isScreenClosed()) {
@@ -64,47 +69,67 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
 
         Platforms.getMinecraftPlatform().showToast("accountsx.account.oauth2.code.generating", null);
 
-        JsonObject device = http.postForm(DEVICE_CODE_URL, Map.of(
-                "client_id", CLIENT_ID,
-                "scope", SCOPE
-        ));
+        DeviceCode device = requestDeviceCode();
 
         if (memory.isScreenClosed()) {
             throw new CancellationException("Screen has been closed.");
         }
 
-        Platforms.getMinecraftPlatform().copyText(device.get("user_code").getAsString());
+        Platforms.getMinecraftPlatform().copyText(device.userCode());
+        Platforms.getMinecraftPlatform().openBrowser(device.verificationUri());
+        Platforms.getMinecraftPlatform().showToast("accountsx.account.oauth2.code.title", "accountsx.account.oauth2.code.desc", device.userCode());
 
-        String url = device.get("verification_uri").getAsString();
-        Platforms.getMinecraftPlatform().openBrowser(url);
+        return loginDeviceCode(device, memory::isScreenClosed);
+    }
 
-        String microsoftAccessToken = null, microsoftRefreshToken = null;
+    /** 取设备码（不含轮询）；失败直接抛 IOException 由调用方展示。 */
+    public DeviceCode requestDeviceCode() throws IOException {
+        JsonObject device = http.postForm(DEVICE_CODE_URL, Map.of(
+                "client_id", CLIENT_ID,
+                "scope", SCOPE
+        ));
 
         int interval;
-        if (device.get("interval") instanceof JsonPrimitive jp &&
-                jp.isNumber()) interval = jp.getAsInt();
-        else interval = 5;
+        if (device.get("interval") instanceof JsonPrimitive jp && jp.isNumber()) {
+            interval = jp.getAsInt();
+        } else {
+            interval = 5;
+        }
         int expires;
-        if (device.get("expires_in") instanceof JsonPrimitive jp &&
-                jp.isNumber()) expires = jp.getAsInt();
-        else expires = 300;
+        if (device.get("expires_in") instanceof JsonPrimitive jp && jp.isNumber()) {
+            expires = jp.getAsInt();
+        } else {
+            expires = 300;
+        }
+        return new DeviceCode(device.get("device_code").getAsString(), device.get("user_code").getAsString(),
+                device.get("verification_uri").getAsString(), Math.max(interval, 1), Math.max(expires, 1));
+    }
 
-        for (int i = 0; i < expires; i += interval) {
+    /**
+     * 轮询设备码并完成 Xbox → Minecraft 链路。
+     *
+     * <p>{@code cancelled} 为 true 时尽快放弃：界面关窗要能立刻停掉轮询，而不是等满分钟级的授权窗口。</p>
+     */
+    public MicrosoftAccount loginDeviceCode(DeviceCode device, BooleanSupplier cancelled) throws IOException, CancellationException {
+        String microsoftAccessToken = null, microsoftRefreshToken = null;
+
+        int interval = device.interval();
+        long deadline = System.nanoTime() + device.expiresIn() * 1_000_000_000L;
+        while (System.nanoTime() < deadline) {
             try {
-                Thread.sleep(Math.max(interval, 1) * 1000L);
+                Thread.sleep(interval * 1000L);
             } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 throw new IOException("Interrupted.", e);
             }
 
-            if (memory.isScreenClosed()) {
+            if (cancelled.getAsBoolean()) {
                 throw new CancellationException("Screen has been closed.");
             }
-            Platforms.getMinecraftPlatform().showToast("accountsx.account.oauth2.code.title", "accountsx.account.oauth2.code.desc", device.get("user_code").getAsString());
 
-            JsonObject token;
-            token = http.postForm(TOKEN_URL, Map.of(
+            JsonObject token = http.postForm(TOKEN_URL, Map.of(
                     "grant_type", "urn:ietf:params:oauth:grant-type:device_code",
-                    "code", device.get("device_code").getAsString(),
+                    "code", device.deviceCode(),
                     "client_id", CLIENT_ID
             ), true);
 
@@ -112,7 +137,6 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
             if (err == null) {
                 microsoftAccessToken = token.get("access_token").getAsString();
                 microsoftRefreshToken = token.get("refresh_token").getAsString();
-
                 break;
             }
 
@@ -135,6 +159,12 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         }
 
         if (microsoftAccessToken == null || microsoftRefreshToken == null) throw new IOException("Invalid token.");
+
+        return finishLogin(microsoftAccessToken, microsoftRefreshToken);
+    }
+
+    /** token 到手后的公共尾巴：Xbox Live → XSTS → Minecraft → profile / avatar。 */
+    private MicrosoftAccount finishLogin(String microsoftAccessToken, String microsoftRefreshToken) throws IOException {
 
         String xblToken, userHash;
         {
