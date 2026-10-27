@@ -32,12 +32,26 @@ public class AccountScreen extends Screen {
     private static final int BTN_GAP = 4;
     private static final int ENTRY_H = 36;
     private static final int LIST_TOP = 48;
+    /** 左栏筛选列表的顶部：返回按钮下面空 16px。 */
+    private static final int FILTER_TOP = PAD + 12 + BTN_H + 16;
+    private static final int SCROLLBAR_W = 3;
+    /** 选中项不在可见范围内（被滚出去）时 selectedFrameY 的哨兵值。 */
+    private static final int NO_FRAME = Integer.MIN_VALUE;
 
     private final Screen parent;
     private AccountListWidget accountListWidget;
 
     private final List<Filter> filters = new ArrayList<>();
     private int selectedFilter;
+
+    /** 左栏滚到的第一项下标：认证服务器多了以后靠滚轮翻，免得压住左下角两个按钮。 */
+    private int filterScroll;
+    /** 上次布局算出的可见行数；滚动上限与滚动条长度都按它来。 */
+    private int visibleRows = 1;
+    /** 本次布局里选中项的行顶 y，渲染高亮用（随滚动变化）。 */
+    private int selectedFrameY = NO_FRAME;
+    /** 筛选项按钮的右边缘：出现滚动条时按钮会收窄，高亮外圈跟着它走。 */
+    private int filterRowRight = SIDEBAR_W - PAD;
 
     public AccountScreen(Screen parent) {
         super(Component.translatable("accountsx.account.general.account_list"));
@@ -96,22 +110,32 @@ public class AccountScreen extends Screen {
 
         int x = PAD;
         int buttonWidth = SIDEBAR_W - PAD * 2;
-        int y = PAD + 12;
 
-        this.addField(new ButtonWidget(x, y, buttonWidth, BTN_H,
+        this.addField(new ButtonWidget(x, PAD + 12, buttonWidth, BTN_H,
                 Component.translatable("accountsx.general.action.close"),
                 button -> this.onClose()));
 
-        y += BTN_H + 16;
-        for (int i = 0; i < this.filters.size(); i++) {
-            final int index = i;
-            this.addField(new ButtonWidget(x, y, buttonWidth, BTN_H, this.filters.get(i).label(),
-                    button -> this.selectFilter(index)));
-            y += BTN_H + BTN_GAP;
-        }
-
         int bottomY = this.height - PAD - BTN_H;
         AuthServer selectedServer = this.filters.get(this.selectedFilter).server();
+
+        // 筛选列表夹在返回按钮和左下角两个按钮之间：放不下就只建可见的那几行，剩下的靠滚动翻。
+        int filterBottom = bottomY - BTN_GAP - (selectedServer != null ? BTN_H + BTN_GAP : 0);
+        int rowStep = BTN_H + BTN_GAP;
+        this.visibleRows = Math.max(1, (filterBottom - FILTER_TOP + BTN_GAP) / rowStep);
+        this.filterScroll = Math.max(0, Math.min(this.filterScroll, this.maxFilterScroll()));
+        this.selectedFrameY = NO_FRAME;
+
+        int rowWidth = this.maxFilterScroll() > 0 ? buttonWidth - SCROLLBAR_W - BTN_GAP : buttonWidth;
+        this.filterRowRight = PAD + rowWidth;
+        for (int row = 0; row < this.visibleRows && this.filterScroll + row < this.filters.size(); row++) {
+            int index = this.filterScroll + row;
+            int rowY = FILTER_TOP + row * rowStep;
+            this.addField(new ButtonWidget(x, rowY, rowWidth, BTN_H, this.filters.get(index).label(),
+                    button -> this.selectFilter(index)));
+            if (index == this.selectedFilter) {
+                this.selectedFrameY = rowY;
+            }
+        }
         if (selectedServer != null) {
             this.addField(new ButtonWidget(x, bottomY - BTN_H - BTN_GAP, buttonWidth, BTN_H,
                     Component.translatable("accountsx.account.general.remove_auth_server"),
@@ -149,12 +173,47 @@ public class AccountScreen extends Screen {
         this.updateWidgets();
     }
 
+    /** 左栏最多能滚多少项；0 表示全部放得下。 */
+    private int maxFilterScroll() {
+        return Math.max(0, this.filters.size() - this.visibleRows);
+    }
+
+    /**
+     * 鼠标在左栏时滚轮翻筛选列表，一格一项。
+     *
+     * @return 是否真的滚动了；已经到头就让回去，右侧账号列表还要用它
+     */
+    private boolean scrollFilters(double mouseX, double amount) {
+        if (mouseX >= SIDEBAR_W || amount == 0 || this.maxFilterScroll() == 0) {
+            return false;
+        }
+
+        int next = this.filterScroll - (int) Math.signum(amount);
+        next = Math.max(0, Math.min(next, this.maxFilterScroll()));
+        if (next == this.filterScroll) {
+            return false;
+        }
+
+        this.filterScroll = next;
+        this.updateWidgets();
+        return true;
+    }
+
     private static boolean isOnServer(BaseAccount account, String apiRoot) {
         if (account.getAccountType() != AccountType.AUTHLIB_INJECTOR || !(account instanceof AbstractInjectorAccount injector)) {
             return false;
         }
 
         return apiRoot.equals(injector.getServer());
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (this.scrollFilters(mouseX, verticalAmount)) {
+            return true;
+        }
+
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     @Override
@@ -165,13 +224,15 @@ public class AccountScreen extends Screen {
         context.fill(SIDEBAR_W, 0, SIDEBAR_W + 2, this.height, 0x40FFFFFF);
 
         // 选中筛选项：外圈垫在控件下面露出来；与登录界面的模式切换共用 SelectionStyle。
-        int selectedY = PAD + 12 + BTN_H + 16 + this.selectedFilter * (BTN_H + BTN_GAP);
-        context.fill(PAD - SelectionStyle.INSET_X, selectedY - SelectionStyle.INSET_Y,
-                SIDEBAR_W - PAD + SelectionStyle.INSET_X, selectedY + BTN_H + SelectionStyle.INSET_Y,
-                SelectionStyle.FRAME);
+        if (this.selectedFrameY != NO_FRAME) {
+            context.fill(PAD - SelectionStyle.INSET_X, this.selectedFrameY - SelectionStyle.INSET_Y,
+                    this.filterRowRight + SelectionStyle.INSET_X, this.selectedFrameY + BTN_H + SelectionStyle.INSET_Y,
+                    SelectionStyle.FRAME);
+        }
 
         super.extractRenderState(context, mouseX, mouseY, delta);
         this.accountListWidget.extractRenderState(context, mouseX, mouseY, delta);
+        this.drawFilterScrollbar(context);
 
         int centerX = (SIDEBAR_W + PAD + this.width - PAD) / 2;
         BaseAccount current = AccountManager.getCurrentAccount();
@@ -228,8 +289,26 @@ public class AccountScreen extends Screen {
     private void removeServer(AuthServer server) {
         AccountManager.authServers().remove(server.kind(), server.apiRoot());
         this.selectedFilter = 0;
+        this.filterScroll = 0;
         this.rebuildFilters();
         this.updateWidgets();
+    }
+
+    /** 筛选放不下时在左栏右侧画一条滚动条；位置跟随 {@link #filterScroll}。 */
+    private void drawFilterScrollbar(GuiGraphicsExtractor context) {
+        int maxScroll = this.maxFilterScroll();
+        if (maxScroll == 0) {
+            return;
+        }
+
+        int trackTop = FILTER_TOP;
+        int trackHeight = this.visibleRows * (BTN_H + BTN_GAP) - BTN_GAP;
+        int scrollbarX = SIDEBAR_W - PAD - SCROLLBAR_W;
+        context.fill(scrollbarX, trackTop, scrollbarX + SCROLLBAR_W, trackTop + trackHeight, 0x33FFFFFF);
+
+        int thumbHeight = Math.max(12, trackHeight * this.visibleRows / this.filters.size());
+        int thumbTop = trackTop + (trackHeight - thumbHeight) * this.filterScroll / maxScroll;
+        context.fill(scrollbarX, thumbTop, scrollbarX + SCROLLBAR_W, thumbTop + thumbHeight, SelectionStyle.FRAME);
     }
 
     /**
