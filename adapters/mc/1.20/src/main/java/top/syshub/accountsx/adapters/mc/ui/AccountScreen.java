@@ -5,7 +5,6 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import top.syshub.accountsx.adapters.mc.ui.impl.UIScreenImpl;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
@@ -217,8 +216,6 @@ public class AccountScreen extends Screen {
             minecraft.setScreen(new MicrosoftLoginScreen(this));
         } else if (addType == AccountType.OFFLINE) {
             minecraft.setScreen(new OfflineLoginScreen(this));
-        } else if (addType != null) {
-            UIScreenImpl.login(minecraft, this, addType.getAccountProvider());
         }
     }
 

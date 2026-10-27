@@ -104,7 +104,6 @@ public final class AccountRepository {
         // 注册表接管 servers（P3.1）：装载 + 补齐固定条目 + 安装到 provider 可见的单例槽。
         authServers.load(root.servers());
         AbstractInjectorAccountProvider.installRegistry(authServers);
-        YggdrasilDeviceCodeFlow.installRegistry(authServers);
     }
 
     /** P3.1：服务器注册表（登录/刷新经注册表使用）。 */

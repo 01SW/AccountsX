@@ -6,16 +6,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.AccountUUID;
-import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.accounts.model.context.AuthPolicy;
 import top.syshub.accountsx.common.net.HttpGateway;
-import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.form.FormAction;
-import top.syshub.accountsx.common.ui.form.FormField;
-import top.syshub.accountsx.common.ui.form.FormSpec;
-import top.syshub.accountsx.common.ui.form.ValidationOutcome;
-import java.util.List;
 
 import java.io.IOException;
 import java.util.Map;
@@ -45,41 +38,8 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         this.http = http;
     }
 
-    @Override
-    public FormSpec form() {
-        return new FormSpec("accountsx.account.general.external", List.of(), List.of(
-                new FormAction("login", "accountsx.account.general.login", true),
-                new FormAction("close", "accountsx.general.action.close", false)));
-    }
-
-    @Override
-    public ValidationOutcome validate(Memory memory) throws IllegalArgumentException {
-        return ValidationOutcome.KEEP_OPEN_AND_HANDLE;
-    }
-
     /** 设备码一次性的取码结果：UI 负责展示与打开浏览器。 */
     public record DeviceCode(String deviceCode, String userCode, String verificationUri, int interval, int expiresIn) {
-    }
-
-    @Override
-    public MicrosoftAccount login(Memory memory) throws IOException, CancellationException {
-        if (memory.isScreenClosed()) {
-            throw new CancellationException("Screen has been closed.");
-        }
-
-        Platforms.getMinecraftPlatform().showToast("accountsx.account.oauth2.code.generating", null);
-
-        DeviceCode device = requestDeviceCode();
-
-        if (memory.isScreenClosed()) {
-            throw new CancellationException("Screen has been closed.");
-        }
-
-        Platforms.getMinecraftPlatform().copyText(device.userCode());
-        Platforms.getMinecraftPlatform().openBrowser(device.verificationUri());
-        Platforms.getMinecraftPlatform().showToast("accountsx.account.oauth2.code.title", "accountsx.account.oauth2.code.desc", device.userCode());
-
-        return loginDeviceCode(device, memory::isScreenClosed);
     }
 
     /** 取设备码（不含轮询）；失败直接抛 IOException 由调用方展示。 */

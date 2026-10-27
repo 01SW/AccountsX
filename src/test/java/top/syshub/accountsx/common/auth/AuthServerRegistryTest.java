@@ -104,22 +104,17 @@ class AuthServerRegistryTest {
     }
 
     @Test
-    void ensure_probesOnceAndDedupsByApiRoot() throws Exception {
-        AuthServer first = registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+    void add_probesLocatorAndStoresEntry() throws Exception {
+        AuthServer first = registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
         assertThat(first.apiRoot()).isEqualTo(API_ROOT);
         assertThat(first.displayName()).isEqualTo("FakeInjector");
         assertThat(first.oauth().clientId()).isEqualTo("fake-shared-client");
         assertThat(first.oauth().deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
-        assertThat(gateway.count(API_ROOT)).isEqualTo(1);
-        assertThat(changeEvents).hasSize(1);
-
-        // 同 locator 再登录：会话内 locator → apiRoot 短路 → 0 次 HEAD/GET
-        AuthServer second = registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
-        assertThat(second.apiRoot()).isEqualTo(API_ROOT);
-        assertThat(gateway.count(API_ROOT)).isEqualTo(1);
+        // ALI 一跳 + 根文档一次 + openid 一次，之后条目里的端点/元数据都从内存取
         assertThat(gateway.count("HEAD " + LOCATOR)).isEqualTo(1);
+        assertThat(gateway.count(API_ROOT)).isEqualTo(1);
         assertThat(changeEvents).hasSize(1);
-        // ensure 只新增自己一条：mojang / offline 在 load() 时补齐，fresh 注册表没有
+        // add 只新增自己一条：mojang / offline 在 load() 时补齐，fresh 注册表没有
         assertThat(registry.servers()).hasSize(1);
     }
 
@@ -139,7 +134,7 @@ class AuthServerRegistryTest {
 
     @Test
     void metadata_isMemoryCachedAfterProbe() throws Exception {
-        registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+        registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
         int before = gateway.count(API_ROOT);
         AuthServerMetadata m = registry.metadata(API_ROOT);
         assertThat(gateway.count(API_ROOT)).isEqualTo(before);
@@ -159,7 +154,7 @@ class AuthServerRegistryTest {
 
     @Test
     void refreshAll_keepsStaleOnFailure() throws Exception {
-        registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+        registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
         long cachedAt = registry.byApiRoot(API_ROOT).cachedAt();
         changeEvents.clear();
         gateway.failGet = true;
@@ -219,8 +214,8 @@ class AuthServerRegistryTest {
     }
 
     @Test
-    void ensure_builtinNoNetwork() throws Exception {
-        AuthServer mojang = registry.ensure(AuthServerKind.MOJANG, "mojang", Map.of());
+    void add_builtinNoNetwork() throws Exception {
+        AuthServer mojang = registry.add(AuthServerKind.MOJANG, "mojang", Map.of());
         assertThat(mojang.apiRoot()).isNull();
         assertThat(gateway.counts).isEmpty();
     }
@@ -228,7 +223,7 @@ class AuthServerRegistryTest {
     @Test
     void probeFailure_propagatesOnAdd() {
         gateway.failGet = true;
-        assertThatThrownBy(() -> registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of()))
+        assertThatThrownBy(() -> registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of()))
                 .isInstanceOf(IOException.class);
         // 加服失败不落盘：条目不存在
         assertThat(registry.byApiRoot(API_ROOT)).isNull();

@@ -1,7 +1,5 @@
 package top.syshub.accountsx.adapters.mc.ui;
 
-import java.util.HashMap;
-import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -10,7 +8,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.manager.AccountManager;
-import top.syshub.accountsx.common.ui.Memory;
 
 /**
  * 登录类界面（外置认证 / 微软 / 离线）的公共骨架。
@@ -130,28 +127,4 @@ abstract class LoginScreen extends Screen {
         context.text(this.font, masked, x + 4, y + 6, 0xFFE0E0E0);
     }
 
-    /** 给 provider 用的极简 Memory：屏幕关闭即取消，值按 guid 直接塞。 */
-    protected final class ScreenMemory implements Memory {
-        private final Map<String, Object> values = new HashMap<>();
-
-        ScreenMemory put(String guid, Object value) {
-            this.values.put(guid, value);
-            return this;
-        }
-
-        @Override
-        public <T> void set(String guid, T value) {
-            this.values.put(guid, value);
-        }
-
-        @Override
-        public <T> T get(String guid, Class<T> type) {
-            return type.cast(this.values.get(guid));
-        }
-
-        @Override
-        public boolean isScreenClosed() {
-            return LoginScreen.this.closed;
-        }
-    }
 }

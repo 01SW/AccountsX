@@ -21,8 +21,8 @@ import top.syshub.accountsx.common.utils.Threading;
  * 拉一次，失败保留旧条目不阻塞）与<b>加服</b>（{@link #add}，失败直接抛、不落盘）时取；
  * 登录 / 刷新 / createAccountContext 只读内存（miss 时兜底补测一次——重启后 refreshAll 还没跑完的窗口）。</p>
  *
- * <p>条目身份是 {@code (kind, apiRoot)}：locator（用户输入的地址）只是 ALI 解析的输入，
- * 不落盘。解析结果在一会话内用 {@link #resolvedLocators} 短路，进程重启后首次登录重新解析一次。</p>
+ * <p>条目身份是 {@code (kind, apiRoot)}：locator（用户输入的地址）只是「加服」时 ALI 解析的输入，
+ * 解析完就丢，不落盘也不缓存——登录路径直接拿左栏筛选项里的 {@link AuthServer}，不再解析地址。</p>
  *
  * <p>不做 TTL 过期：公钥轮换极少，过期反而引入登录中途失效的竞态。</p>
  *
@@ -48,9 +48,6 @@ public final class AuthServerRegistry {
     private final Map<Key, AuthServer> servers = new LinkedHashMap<>();
 
     private final Map<String, AuthServerMetadata> metadata = new LinkedHashMap<>();
-
-    /** locator → apiRoot 的进程内短路缓存：只省 HEAD，不进配置文件（apiRoot 才是身份）。 */
-    private final Map<String, String> resolvedLocators = new LinkedHashMap<>();
 
     public AuthServerRegistry(HttpGateway http) {
         this(http, null);
@@ -97,7 +94,6 @@ public final class AuthServerRegistry {
     public synchronized void load(JsonArray array) {
         servers.clear();
         metadata.clear();
-        resolvedLocators.clear();
         for (AuthServer server : AuthServer.readAll(array)) {
             if (server.kind().builtin())
                 continue;
@@ -146,30 +142,6 @@ public final class AuthServerRegistry {
         return Objects.toString(type, "") + "|" + Objects.toString(apiRoot, "");
     }
 
-    /** 登录快捷路径：clientId 默认取内置 host 表，调用方不必关心它。 */
-    public AuthServer ensure(AuthServerKind kind, String locator) throws IOException {
-        return ensure(kind, locator, OAuthClientIds.BY_HOST);
-    }
-
-    /**
-     * 登录快捷路径：解析 → 已有条目直接复用（0 次探测 / 0 次 HEAD，命中会话缓存）；没条目才探测落表。
-     */
-    @Threading.Thread(Threading.ThreadRole.WORKER)
-    public AuthServer ensure(AuthServerKind kind, String locator, Map<String, String> knownClientIds)
-            throws IOException {
-        Objects.requireNonNull(kind, "kind");
-        Objects.requireNonNull(locator, "locator");
-        if (kind.builtin())
-            return new AuthServer(null, kind, null, null, 0L);
-        String apiRoot = resolveCached(kind, locator.trim());
-        synchronized (this) {
-            AuthServer existing = servers.get(new Key(kind, apiRoot));
-            if (existing != null)
-                return existing;
-        }
-        return store(kind, apiRoot, knownClientIds);
-    }
-
     /** 加服（UI）：clientId 默认取内置 host 表。 */
     public AuthServer add(AuthServerKind kind, String locator) throws IOException {
         return add(kind, locator, OAuthClientIds.BY_HOST);
@@ -178,8 +150,6 @@ public final class AuthServerRegistry {
     /**
      * 加服（UI 入口）：先 ALI 解析，再探测；{@code (kind, apiRoot)} 与现有条目相同则视为覆盖
      * （重新探测并替换条目，用户的显式动作总是拿到最新元数据）。
-     *
-     * <p>与 {@link #ensure} 的区别只有这一点：ensure 见到已有条目就直接复用，不重复探测。</p>
      */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public AuthServer add(AuthServerKind kind, String locator, Map<String, String> knownClientIds)
@@ -189,12 +159,8 @@ public final class AuthServerRegistry {
         if (kind.builtin())
             return new AuthServer(null, kind, null, null, 0L);
         String trimmed = locator.trim();
-        // 加服是用户显式动作：强制重新解析（地址的 ALI 指向可能已经变了）。
-        String apiRoot = resolveApiRoot(kind, trimmed);
-        synchronized (this) {
-            resolvedLocators.put(cacheKey(kind, trimmed), apiRoot);
-        }
-        return store(kind, apiRoot, knownClientIds);
+        // 加服是用户显式动作：每次都重新解析（地址的 ALI 指向可能已经变了）。
+        return store(kind, resolveApiRoot(kind, trimmed), knownClientIds);
     }
 
     /** 探测并写入条目（同键覆盖），成功后触发持久化。 */
@@ -207,24 +173,6 @@ public final class AuthServerRegistry {
         if (onChange != null)
             onChange.run();
         return probed;
-    }
-
-    private static String cacheKey(AuthServerKind kind, String locator) {
-        return kind.name() + "|" + locator;
-    }
-
-    private String resolveCached(AuthServerKind kind, String locator) throws IOException {
-        String cacheKey = cacheKey(kind, locator);
-        synchronized (this) {
-            String known = resolvedLocators.get(cacheKey);
-            if (known != null)
-                return known;
-        }
-        String apiRoot = resolveApiRoot(kind, locator);
-        synchronized (this) {
-            resolvedLocators.put(cacheKey, apiRoot);
-        }
-        return apiRoot;
     }
 
     /** 启动预热：clientId 默认取内置 host 表。 */
@@ -294,7 +242,6 @@ public final class AuthServerRegistry {
         synchronized (this) {
             removed = servers.remove(new Key(kind, apiRoot)) != null;
             metadata.remove(apiRoot);
-            resolvedLocators.values().removeIf(apiRoot::equals);
         }
         if (removed && onChange != null) {
             onChange.run();

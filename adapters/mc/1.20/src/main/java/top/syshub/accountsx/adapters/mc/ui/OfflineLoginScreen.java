@@ -9,8 +9,6 @@ import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccountProvider;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.task.TaskScheduler;
-import top.syshub.accountsx.common.ui.Memory;
-import top.syshub.accountsx.common.ui.form.FieldKey;
 
 /**
  * 离线账号登录界面。
@@ -81,11 +79,7 @@ public class OfflineLoginScreen extends LoginScreen {
             BaseAccount account = null;
             Component failure = null;
             try {
-                Memory memory = new ScreenMemory()
-                        .put(FieldKey.PLAYER_NAME.value(), name)
-                        .put("playerUuid", uuid);
-                this.provider.validate(memory);
-                account = this.provider.login(memory);
+                account = this.provider.login(name, uuid);
             } catch (Exception e) {
                 failure = failText(e);
             }

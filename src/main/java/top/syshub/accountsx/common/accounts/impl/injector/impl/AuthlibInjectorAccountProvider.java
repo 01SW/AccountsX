@@ -8,10 +8,9 @@ import top.syshub.accountsx.common.net.HttpGateway;
 
 import java.util.UUID;
 
-/** 非 final：P3.1 单测经 devicePrompts() 缝替换 device-code 的 UI/等待副作用。 */
 public class AuthlibInjectorAccountProvider extends AbstractInjectorAccountProvider<AuthlibInjectorAccountProvider.AuthlibInjectorAccount> {
     public AuthlibInjectorAccountProvider(HttpGateway http) {
-        super("accountsx.account.objects.server_domain", "accountsx.account.objects.user_id", "Authlib-Injector", http);
+        super("Authlib-Injector", http);
     }
 
     @Override

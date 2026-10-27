@@ -59,7 +59,7 @@ AccountsX（根项目 / common）
 │   ├── common/
 │   │   ├── AccountsX.java              # ClientModInitializer，入口
 │   │   ├── accounts/                    # 账号模型 + 提供者
-│   │   │   ├── AccountProvider.java     # 接口：configure / validate / login / refresh
+│   │   │   ├── AccountProvider.java     # 接口：createAccountContext / refresh（建号在各 provider 自己的方法）
 │   │   │   ├── AccountUUID.java
 │   │   │   ├── BaseAccount.java         # 基类，含嵌套 AccountStorage
 │   │   │   ├── impl/env/                # 环境账号（启动器会话）
@@ -78,7 +78,7 @@ AccountsX（根项目 / common）
 │   │   │   └── AccountWorker.java       # @Deprecated 转发到 TaskScheduler（兼容旧适配器）
 │   │   ├── storage/                     # 全局单文件存储（ConfigStore / ConfigRoot / JsonConfigStore）
 │   │   │   └── migration/               # Migration / MigrationChain + 标准迁移链（0→1→2→3→4，含 UNIFY_AND_DECOUPLE）
-│   │   ├── ui/                          # 版本无关的 UIScreen / Memory / Translator
+│   │   ├── ui/                          # 版本无关的 Translator / SelectionStyle / 列表模型
 │   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
 │   │       └── image/                  # 头像渲染+落盘（AvatarRenderer / AwtAvatarRenderer / AvatarCache；AWT/ImageIO 在 common 内白名单放行）
@@ -88,7 +88,7 @@ AccountsX（根项目 / common）
 │   └── ├── buildSrc/                        # 预编译 Gradle 插件（3 个）
 └── src/main/resources/
     ├── fabric.mod.json              # 核心模组元数据
-    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，43 个 key）
+    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 58 个 key）
     └── assets/accountsx/textures/gui/  # GUI 资源单一数据源：account.png（切换图标）、
                                         #  sprites/icon/account.png（标题屏精灵）、alex_avatar.png（默认头像）
 ```
@@ -122,7 +122,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
   - `MICROSOFT`（configId: `"microsoft"`）— device-code OAuth
   - `AUTHLIB_INJECTOR`（configId: `"injector.authlib-injector"`）— 第三方 Yggdrasil
   - `UNITED_INJECTOR`（configId: `"injector.united"`）— 联合通行证
-- Provider 实现 `configure`（UI 配置）/ `validate`（校验输入）/ `login` / `refresh` / `createAccountContext`
+- Provider 实现 `refresh` / `createAccountContext`，以及该类型自己的建号方法（外置认证 `loginPassword` / `loginDeviceCode`、离线 `login(name, uuid)`、微软 `requestDeviceCode` / `loginDeviceCode`）
 - 登录上下文是 `AccountContext(AuthServerContext, AuthSecurityContext, AuthPolicy)`，用于构建 authlib session
 
 ### 运行时流程
@@ -142,14 +142,14 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - 旧版本按 `StandardMigrations` 链升级并回写；未知账号条目跳过但保留。
 - `ENV_DEFAULT` 账号不写入磁盘
 - 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
-- `servers` 由 `AuthServerRegistry`（`common/auth/`）接管：登录/刷新/建会话只读内存缓存（公钥、skinDomains、OIDC 端点），仅在启动预热、加服（登录快捷路径隐式加服）时探测；探测失败保留 stale 条目不阻塞；`mojang` / `offline` 为固定条目（无 `apiRoot`），装载时自动补齐。
+- `servers` 由 `AuthServerRegistry`（`common/auth/`）接管：登录/刷新/建会话只读内存缓存（公钥、skinDomains、OIDC 端点），仅在启动预热与加服（用户在「添加认证服务器」里显式提交）时探测；登录路径直接用现有条目、不再解析 locator；探测失败保留 stale 条目不阻塞；`mojang` / `offline` 为固定条目（无 `apiRoot`），装载时自动补齐。
 
 ### MC 适配器（`adapters/mc/<version>`）
 
 每个版本是独立的 Loom 项目。典型布局：
 
 - `MinecraftAdapterImpl` — 实现 `MinecraftPlatform`
-- `ui/` — `AccountScreen`、列表控件、`UIScreenImpl` / `DefaultMemory` 桥接 common `UIScreen`/`Memory`
+- `ui/` — `AccountScreen`（筛选 + 列表）、`AccountListWidget`、登录界面（`LoginScreen` 骨架 + `MicrosoftLoginScreen` / `OfflineLoginScreen` / `ExternalLoginScreen`）、`ServerScreen`
 - `mixins/` — 标题屏按钮、session/skin accessor、Yggdrasil hook；多数版本嵌套在 `mixins/mixins/` 下（1.20 较扁平）
 
 GUI 资源（切换图标 `account.png`、标题屏精灵 `icon/account`、默认头像 `alex_avatar.png`）统一放在 common 的 `assets/accountsx/textures/gui/` 下。`TitleScreenMixin` 的精灵 `ResourceLocation` 用 `MOD_ID`（`accountsx`）而非 `MC_ADAPTER_ID`，由 common 提供纹理；新增 MC 版本时无需复制这些资源。Mod Menu 集成（配置入口 + 图标）由 mc 适配器通过 `fabric.mod.json` 的 `custom.modmenu.parent` 提供，不再有独立的 `accountsx-adapter-modmenu` 适配器。
@@ -251,11 +251,11 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 需要改动的 **6 个点**（漏任何一个都会静默失败）：
 
 1. **`AccountType` 枚举**（`common/accounts/model/AccountType.java`）— 添加枚举值，传入 accountClass、provider 实例、configId 字符串（持久化契约，不可随意改）
-2. **Provider 实现**（`common/accounts/impl/`）— 实现 `AccountProvider<T>` 的 `configure` / `validate` / `login` / `refresh` / `createAccountContext`
+2. **Provider 实现**（`common/accounts/impl/`）— 实现 `AccountProvider<T>` 的 `refresh` / `createAccountContext`，并提供该类型的建号方法
 3. **账号模型**（`BaseAccount` 子类）— 定义账号数据结构，注册 Gson TypeAdapter（若需要自定义序列化）
 4. **i18n key**（`en_us.json` + `zh_cn.json`）— 添加 `accountsx.account.type.<type 名小写>.name` 和 `.using`（注意是 enum name 小写，不是 configId）
 5. **配置迁移**（`storage/migration/` 新增一跳，注册进 `StandardMigrations`）— 如果 configId/kind 是新增的，确保旧配置中的未知 type 不会导致整个加载失败（`AccountType` 加枚举值时同步加 `kind`；仓储 `byKind` 加分支，`toJson` 无需改——走 `getKind()`）
-6. **适配器 UI**（各 `adapters/mc/<ver>/ui/AccountScreen.java`）— 确保 `configure()` / `validate()` 在 `UIScreen` SPI 下工作
+6. **适配器 UI**（各 `adapters/mc/<ver>/ui/`）— 若登录方式不同于现有的外置/微软/离线，加一个 `LoginScreen` 子类，并在 `AccountScreen.openAddAccount` 里路由到它
 
 ### 改配置格式
 
@@ -279,7 +279,7 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 
 - Java 17、UTF-8、4 空格缩进
 - 注释解释「为什么」而非「做什么」
-- `AccountProvider.validate` 返回 `int` 常量（`STATE_IMMEDIATE_CLOSE=0` / `STATE_HANDLE=1`），而非枚举
+- 建号入口按账号类型各自成方法（`loginPassword` / `loginDeviceCode` / `login(name, uuid)`），不要重新引入「通用表单 + Memory 键值袋」这类跨类型抽象：各类型登录流程差别太大，抽象只会把差异挤进字符串键
 - 非空不变量不要用 `assert x != null` 表达（静态分析无法据此推断回调线程/按钮 `OnPress` 中的引用安全，也无法满足 `@NotNull` 形参）；统一改为捕获到 `final` 局部变量后显式判空并 `return`
 
 ## Commit 规范

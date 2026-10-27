@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -98,9 +99,44 @@ class AccountRepositoryTest {
     /** 测试用装饰器：记录 save 快照，同时暴露 MigrationContext（实现仓储的 Contextual）。 */
     private final class DelegatingStore implements ConfigStore, AccountRepository.Contextual {
         private final JsonConfigStore inner;
+        /** 非空时把落盘堵住：用来确定性地制造「写进行中又来变更」的窗口。 */
+        private volatile CountDownLatch entered;
+        private volatile CountDownLatch release;
 
         DelegatingStore(JsonConfigStore inner) {
             this.inner = inner;
+        }
+
+        void blockWrites(CountDownLatch entered, CountDownLatch release) {
+            this.entered = entered;
+            this.release = release;
+        }
+
+        private void awaitGate() throws IOException {
+            CountDownLatch entered = this.entered;
+            CountDownLatch release = this.release;
+            if (entered == null || release == null)
+                return;
+            entered.countDown();
+            try {
+                if (!release.await(10, TimeUnit.SECONDS))
+                    throw new IOException("测试未放行落盘");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException(e);
+            }
+        }
+
+        private void record(com.google.gson.JsonArray accounts) {
+            StringBuilder sb = new StringBuilder();
+            accounts.forEach(e -> {
+                JsonObject jo = e.getAsJsonObject();
+                sb.append(str(jo.get("type"))).append('|');
+                if (jo.get("profile") instanceof JsonObject p)
+                    sb.append(str(p.get("uuid")));
+                sb.append(';');
+            });
+            writes.add(sb.toString());
         }
 
         @Override
@@ -110,16 +146,16 @@ class AccountRepositoryTest {
 
         @Override
         public void save(ConfigRoot root) throws IOException {
-            StringBuilder sb = new StringBuilder();
-            root.accounts().forEach(e -> {
-                JsonObject jo = e.getAsJsonObject();
-                sb.append(str(jo.get("type"))).append('|');
-                if (jo.get("profile") instanceof JsonObject p)
-                    sb.append(str(p.get("uuid")));
-                sb.append(';');
-            });
-            writes.add(sb.toString());
+            awaitGate();
+            record(root.accounts());
             inner.save(root);
+        }
+
+        @Override
+        public void saveSnapshot(String json) throws IOException {
+            awaitGate();
+            record(JsonParser.parseString(json).getAsJsonObject().getAsJsonArray("accounts"));
+            inner.saveSnapshot(json);
         }
 
         @Override
@@ -146,8 +182,11 @@ class AccountRepositoryTest {
                 + uuid32.substring(12, 16) + "-" + uuid32.substring(16, 20) + "-" + uuid32.substring(20);
     }
 
+    private DelegatingStore lastStore;
+
     private AccountRepository repo(MigrationChain chain) {
-        AccountRepository repository = new AccountRepository(store(chain));
+        lastStore = (DelegatingStore) store(chain);
+        AccountRepository repository = new AccountRepository(lastStore);
         repository.initialize(null, null);
         return repository;
     }
@@ -183,13 +222,38 @@ class AccountRepositoryTest {
         repository.drop(alex);
         assertThat(repository.view()).containsExactly(steve);
 
-        // 连续变更合并写：串行通道只保证「排队的写被合并」，合并到 1~3 次取决于标脏与任务启动的竞态，
-        // 唯一恒真的是「不逐次落盘（< 4 次）」且最后一次是终态。
+        // 连续变更的合并写次数取决于标脏与写任务启动的竞态（1~4 次都可能），
+        // 这里只断言恒真的部分：确实落过盘、且最后一次是终态。
+        // 「写进行中的变更只合并成一次」由 mergeWrites_whileOneIsInFlight 确定性验证。
         awaitWrites(writes, 1, "至少落盘 1 次");
         TimeUnit.MILLISECONDS.sleep(500);
-        assertThat(writes).as("4 次变更不应逐次落盘").hasSizeLessThan(4);
         assertThat(writes.get(writes.size() - 1))
                 .isEqualTo("offline|069a79f444e94726a5befca90e38aaf5;");
+    }
+
+    @Test
+    void mergeWrites_whileOneIsInFlight() throws Exception {
+        AccountRepository repository = repo(MigrationChain.EMPTY);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        lastStore.blockWrites(entered, release);
+
+        OfflineAccount steve = offline("Steve", "069a79f444e94726a5befca90e38aaf5");
+        OfflineAccount alex = offline("Alex", "069a79f444e94726a5befca90e38aaf6");
+
+        repository.add(steve);
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("第一次写进入落盘").isTrue();
+
+        // 写进行中：writePending 已被清空，三次变更只排一个写任务
+        repository.add(alex);
+        repository.move(alex, 0);
+        repository.drop(steve);
+
+        release.countDown();
+        awaitWrites(writes, 2, "阻塞的写 + 合并的一次");
+        TimeUnit.MILLISECONDS.sleep(300);
+        assertThat(writes).as("写进行中的多次变更只合并成一次落盘").hasSize(2);
+        assertThat(writes.get(1)).isEqualTo("offline|069a79f444e94726a5befca90e38aaf6;");
     }
 
     @Test

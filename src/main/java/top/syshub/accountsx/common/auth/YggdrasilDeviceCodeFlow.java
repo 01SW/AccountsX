@@ -5,7 +5,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import java.io.IOException;
-import java.net.URI;
 import java.util.Base64;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -19,32 +18,10 @@ import top.syshub.accountsx.common.utils.Threading;
  * （旧启动器写的 servers[] 没有 device 端点、或启动预热时服务器宕过机）。
  *
  * <p>流程拆成两段以支撑「先展示验证码、用户完成授权后再开局」的界面：
- * {@link #requestDeviceCode} 只换设备码，{@link #awaitToken} 负责轮询 token。
- * {@link #login} 是两者的一次性组合，保留给旧的单表单登录路径。</p>
+ * {@link #requestDeviceCode} 只换设备码，{@link #awaitToken} 负责轮询 token；界面自己决定
+ * 展示验证码、开浏览器、复制链接这些副作用，这一段不再需要 {@code Prompts} 抽象。</p>
  */
 public final class YggdrasilDeviceCodeFlow {
-
-    private static volatile AuthServerRegistry registry;
-
-    public static void installRegistry(AuthServerRegistry r) {
-        registry = r;
-    }
-
-    private static AuthServerRegistry registry() {
-        if (registry == null)
-            throw new IllegalStateException("AuthServerRegistry 未注入。");
-        return registry;
-    }
-    /** 设备码流程的 UI/等待副作用；P3.1 抽成参数使登录编排可单测（无需 MC 适配器）。 */
-    public interface Prompts {
-        void toast(String titleKey, String descKey, Object... args);
-
-        void copyText(String text);
-
-        void openBrowser(String url);
-
-        void sleepMillis(long millis) throws IOException;
-    }
 
     /** 休眠抽象：单测要快进、界面要能在关闭后立刻放弃，都不能依赖裸 {@link Thread#sleep}。 */
     public interface Sleep {
@@ -65,33 +42,6 @@ public final class YggdrasilDeviceCodeFlow {
             return verificationUriComplete != null ? verificationUriComplete : verificationUri;
         }
     }
-
-    public static final Prompts PLATFORM_PROMPTS = new Prompts() {
-        @Override
-        public void toast(String titleKey, String descKey, Object... args) {
-            top.syshub.accountsx.common.adapters.Platforms.getMinecraftPlatform().showToast(titleKey, descKey, args);
-        }
-
-        @Override
-        public void copyText(String text) {
-            top.syshub.accountsx.common.adapters.Platforms.getMinecraftPlatform().copyText(text);
-        }
-
-        @Override
-        public void openBrowser(String url) {
-            top.syshub.accountsx.common.adapters.Platforms.getMinecraftPlatform().openBrowser(url);
-        }
-
-        @Override
-        public void sleepMillis(long millis) throws IOException {
-            try {
-                Thread.sleep(millis);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted.", e);
-            }
-        }
-    };
 
     private static final String SCOPE =
             "openid offline_access Yggdrasil.PlayerProfiles.Select Yggdrasil.Server.Join";
@@ -193,35 +143,6 @@ public final class YggdrasilDeviceCodeFlow {
         };
     }
 
-    @Threading.Thread(Threading.ThreadRole.WORKER)
-    public static YggdrasilAuthResult login(HttpGateway http, Prompts prompts, AuthServer server,
-            Map<String, String> knownClientIds) throws IOException {
-        AuthServer active = server;
-        if (!supportsDeviceCode(server)) {
-            OAuthEndpoints discovered = discover(http, server.apiRoot(), knownClientIds);
-            active = new AuthServer(server.apiRoot(), server.kind(), server.displayName(),
-                    discovered, server.cachedAt());
-        }
-
-        prompts.toast("accountsx.account.oauth2.code.generating", null);
-        DeviceCode code = requestDeviceCode(http, active);
-
-        String url = code.browserUrl();
-        if (url == null)
-            throw new IOException("Invalid verification url.");
-        prompts.openBrowser(url);
-        // 有 verification_uri_complete 时把整条链接放进剪贴板（用户可能在别的机器上打开），
-        // 否则只能复制验证码。
-        prompts.copyText(code.verificationUriComplete() != null ? url : code.userCode());
-        prompts.toast("accountsx.account.oauth2.code.title", "accountsx.account.oauth2.code.desc", code.userCode());
-
-        YggdrasilAuthResult result = awaitToken(http, active, code, prompts::sleepMillis, () -> false);
-        // 探测到的端点回写注册表，下次登录（含新界面）不再探测。
-        if (active != server)
-            registry().updateOAuthEndpoints(server.kind(), server.apiRoot(), active.oauth());
-        return result;
-    }
-
     /** OAuth 刷新（信封 JSON 即 loginToken 去掉前缀的部分）。 */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public static YggdrasilAuthResult refresh(HttpGateway http, String envelopeJson, String apiRoot)
@@ -266,30 +187,6 @@ public final class YggdrasilDeviceCodeFlow {
         String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
         JsonObject userinfo = JsonParser.parseString(payload).getAsJsonObject();
         return YggdrasilProfiles.readProfiles(userinfo).get(0);
-    }
-
-    /** 兜底发现：GET 根路径取 openid_configuration_url，再取端点与 clientId（内置 host 表 > YGGC 的 shared_client_id）。 */
-    static OAuthEndpoints discover(HttpGateway http, String apiRoot, Map<String, String> knownClientIds)
-            throws IOException {
-        JsonObject ygg = http.get(apiRoot);
-        String openidConfigurationUrl;
-        if (ygg.get("meta") instanceof JsonObject meta
-                && meta.get("feature.openid_configuration_url") instanceof JsonPrimitive jp1 && jp1.isString())
-            openidConfigurationUrl = jp1.getAsString();
-        else
-            throw new IOException("Invalid openid configuration url!");
-
-        JsonObject config = http.get(openidConfigurationUrl);
-        String deviceEndpoint = config.get("device_authorization_endpoint").getAsString();
-        String tokenEndpoint = config.get("token_endpoint").getAsString();
-        String userinfo = str(config.get("userinfo_endpoint"));
-        String clientId;
-        String host = URI.create(apiRoot).getHost();
-        String known = knownClientIds == null ? null : knownClientIds.get(host);
-        clientId = known != null ? known : YggdrasilServerProbe.sharedClientId(config);
-        if (clientId == null)
-            throw new IOException("Invalid client id!");
-        return new OAuthEndpoints(clientId, tokenEndpoint, deviceEndpoint, userinfo);
     }
 
     private static int intOr(JsonElement e, int fallback) {

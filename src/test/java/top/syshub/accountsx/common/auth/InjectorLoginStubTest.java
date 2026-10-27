@@ -21,7 +21,6 @@ import top.syshub.accountsx.common.auth.AuthServerRegistry;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
 import top.syshub.accountsx.common.task.TaskScheduler;
-import top.syshub.accountsx.common.ui.Memory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -126,75 +125,15 @@ class InjectorLoginStubTest {
         return header + "." + payload + ".fakesig";
     }
 
-    /** 测试用 Memory：值直接塞，无 UI。 */
-    private static final class MapMemory implements Memory {
-        private final Map<String, Object> values = new java.util.HashMap<>();
-
-        MapMemory put(String guid, Object v) {
-            values.put(guid, v);
-            return this;
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public <T> void set(String guid, T value) {
-            values.put(guid, value);
-        }
-
-        @Override
-        public <T> T get(String guid, Class<T> type) {
-            return type.cast(values.get(guid));
-        }
-
-        @Override
-        public boolean isScreenClosed() {
-            return false;
-        }
-    }
-
-    private static final String GUID_SERVER = "server";
-    private static final String GUID_USER = "username";
-    private static final String GUID_PASSWORD = "password";
-    private static final String GUID_PLAYER = "playerName";
-
-    /** 假 Prompts：吞掉 toast/复制/开浏览器，sleep 直接返回（设备码轮询不真等）。 */
-    private static final class FakePrompts implements YggdrasilDeviceCodeFlow.Prompts {
-        final java.util.List<String> toasts = new java.util.ArrayList<>();
-
-        @Override
-        public void toast(String titleKey, String descKey, Object... args) {
-            toasts.add(titleKey);
-        }
-
-        @Override
-        public void copyText(String text) {
-        }
-
-        @Override
-        public void openBrowser(String url) {
-        }
-
-        @Override
-        public void sleepMillis(long millis) {
-        }
-    }
-
-    private static AuthlibInjectorAccountProvider providerWith(YggdrasilDeviceCodeFlow.Prompts prompts) {
-        return new AuthlibInjectorAccountProvider(JdkHttpGateway.INSTANCE) {
-            @Override
-            protected YggdrasilDeviceCodeFlow.Prompts devicePrompts() {
-                return prompts;
-            }
-        };
-    }
-
     @Test
-    void passwordLogin_probesServerOnceAcrossTwoLogins() throws Exception {
+    void passwordLogin_reusesServerEntryAcrossTwoLogins() throws Exception {
         AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(JdkHttpGateway.INSTANCE);
+        // 服务器条目由「添加认证服务器」建立：ALI 解析 + 一次探测
+        AuthServer server = registry.add(AuthServerKind.YGGDRASIL, base);
 
-        AbstractInjectorAccount first = provider.login(new MapMemory()
-                .put(GUID_SERVER, base).put(GUID_USER, "fake-user").put(GUID_PASSWORD, "fake-pass")
-                .put(GUID_PLAYER, ""));
+        AbstractInjectorAccount[] box = new AbstractInjectorAccount[1];
+        TaskScheduler.submit(() -> box[0] = provider.loginPassword(server, "fake-user", "fake-pass")).get();
+        AbstractInjectorAccount first = box[0];
         assertThat(first.getServer()).isEqualTo(apiRoot);
         assertThat(first.getAccountStorage().getPlayerName()).isEqualTo("Steve");
         assertThat(first.getLoginToken()).isEqualTo("fake-access");
@@ -202,16 +141,14 @@ class InjectorLoginStubTest {
         assertThat(count("GET /api/yggdrasil")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/authserver/authenticate")).isEqualTo(1);
 
-        AbstractInjectorAccount second = provider.login(new MapMemory()
-                .put(GUID_SERVER, base).put(GUID_USER, "fake-user").put(GUID_PASSWORD, "fake-pass")
-                .put(GUID_PLAYER, ""));
+        TaskScheduler.submit(() -> box[0] = provider.loginPassword(server, "fake-user", "fake-pass")).get();
+        AbstractInjectorAccount second = box[0];
         assertThat(second.getServer()).isEqualTo(apiRoot);
-        // P3.1 验收：同服务器第二个账号零探测（HEAD/GET 计数不涨），只多一次 authenticate
+        // 登录路径直接拿条目里的端点：第二个账号零探测，只多一次 authenticate
         assertThat(count("GET /api/yggdrasil")).isEqualTo(1);
         assertThat(count("HEAD /")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/authserver/authenticate")).isEqualTo(2);
 
-        AuthServer server = registry.byApiRoot(apiRoot);
         assertThat(server.displayName()).isEqualTo("FakeInjector");
         assertThat(server.apiRoot()).isEqualTo(apiRoot);
         assertThat(server.oauth().clientId()).isEqualTo("fake-shared-client");
@@ -224,12 +161,14 @@ class InjectorLoginStubTest {
 
     @Test
     void deviceCodeLogin_usesCachedEndpoints() throws Exception {
-        AuthlibInjectorAccountProvider provider = providerWith(new FakePrompts());
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(JdkHttpGateway.INSTANCE);
+        AuthServer server = registry.add(AuthServerKind.YGGDRASIL, base);
         AbstractInjectorAccount[] box = new AbstractInjectorAccount[1];
         // setLoginProfile 要求 worker 线程：登录编排在调度器上跑（与生产一致）
-        MapMemory memory = new MapMemory().put(GUID_SERVER, base).put(GUID_USER, "").put(GUID_PASSWORD, "")
-                .put(GUID_PLAYER, "");
-        TaskScheduler.submit(() -> box[0] = provider.login(memory)).get();
+        TaskScheduler.submit(() -> {
+            YggdrasilDeviceCodeFlow.DeviceCode code = provider.fetchDeviceCode(server);
+            box[0] = provider.loginDeviceCode(server, code, () -> false);
+        }).get();
         AbstractInjectorAccount account = box[0];
 
         assertThat(account.getLoginToken()).startsWith(AccountOAuth.PREFIX);
@@ -237,7 +176,7 @@ class InjectorLoginStubTest {
         assertThat(account.getAccountStorage().getPlayerName()).isEqualTo("Alex");
         assertThat(count("POST /api/yggdrasil/oauth/device")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/oauth/token")).isEqualTo(1);
-        // 端点来自注册表条目：openid 配置只在 ensure 探测时取过一次
+        // 端点来自注册表条目：openid 配置只在加服探测时取过一次
         assertThat(count("GET /api/yggdrasil/.well-known/openid")).isEqualTo(1);
     }
 
