@@ -59,5 +59,6 @@ tasks.test {
 dependencies {
     "testImplementation"(Catalog.notation(project, "junit-jupiter"))
     "testImplementation"(Catalog.notation(project, "assertj-core"))
+    "testImplementation"(Catalog.notation(project, "commons-lang3"))
     "testRuntimeOnly"(Catalog.notation(project, "junit-platform-launcher"))
 }
