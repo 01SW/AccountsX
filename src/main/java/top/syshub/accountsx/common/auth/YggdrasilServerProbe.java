@@ -27,14 +27,24 @@ public final class YggdrasilServerProbe {
     public record Probed(String displayName, AuthServerMetadata metadata, OAuthEndpoints oauth) {
     }
 
-    public static Probed probe(HttpGateway http, String apiRoot, String locatorHint,
-            Map<String, String> knownClientIds) throws IOException {
+    public static Probed probe(HttpGateway http, String apiRoot, Map<String, String> knownClientIds)
+            throws IOException {
         JsonObject root = http.get(apiRoot);
         JsonObject meta = root.get("meta") instanceof JsonObject m ? m : null;
         String displayName = meta != null ? str(meta.get("serverName")) : null;
         if (displayName == null)
-            displayName = locatorHint;
+            displayName = hostOf(apiRoot);
         return new Probed(displayName, readMetadata(root), oauthFromMeta(http, meta, apiRoot, knownClientIds));
+    }
+
+    /** apiRoot 的 host；解析不出来时退回 apiRoot 本身（仅用于展示名兜底）。 */
+    private static String hostOf(String apiRoot) {
+        try {
+            String host = URI.create(apiRoot).getHost();
+            return host != null ? host : apiRoot;
+        } catch (IllegalArgumentException e) {
+            return apiRoot;
+        }
     }
 
     public static String resolveApiRoot(String locator, HttpGateway http) throws IOException {
@@ -122,7 +132,8 @@ public final class YggdrasilServerProbe {
         } catch (IllegalArgumentException ignored) {
         }
         // clientId 只有两个来源：内置 host 表 > YGGC（Yggdrasil Connect）openid 配置里的 shared_client_id。
-        // 两处都取不到就判定该服务器不支持 OAuth（退回密码登录），不再凭端点存在瞎猜。
+        // 查表用的是 apiRoot 的 host——不是 ALI 解析过程中的域名（解析可能 301 跨域），
+        // OAuth 端点与 client_id 都属于最终 apiRoot。两处都取不到就判定该服务器不支持 OAuth。
         String clientId = host == null || knownClientIds == null ? null : knownClientIds.get(host);
         JsonObject config = http.get(openidUrl);
         String device = str(config.get("device_authorization_endpoint"));

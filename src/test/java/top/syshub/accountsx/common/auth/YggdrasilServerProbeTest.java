@@ -17,7 +17,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class YggdrasilServerProbeTest {
 
-    private static final String LOCATOR = "http://injector.test";
     private static final String API_ROOT = "http://injector.test/api/yggdrasil";
     private static final String OPENID_URL = API_ROOT + "/.well-known/openid";
 
@@ -88,12 +87,12 @@ class YggdrasilServerProbeTest {
         StubGateway gateway = new StubGateway().put(API_ROOT, root);
         if (config != null)
             gateway.put(OPENID_URL, config);
-        return YggdrasilServerProbe.probe(gateway, API_ROOT, LOCATOR, known).oauth();
+        return YggdrasilServerProbe.probe(gateway, API_ROOT, known).oauth();
     }
 
     private static boolean supports(OAuthEndpoints oauth) {
         return YggdrasilDeviceCodeFlow.supportsDeviceCode(
-                new AuthServer(API_ROOT, AuthServerKind.YGGDRASIL, "FakeInjector", LOCATOR, oauth, 0L));
+                new AuthServer(API_ROOT, AuthServerKind.YGGDRASIL, "FakeInjector", oauth, 0L));
     }
 
     @Test

@@ -229,7 +229,7 @@ public class AccountScreen extends Screen {
      * 避免选中项指向已经消失的筛选。</p>
      */
     private void removeServer(AuthServer server) {
-        AccountManager.authServers().remove(server.apiRoot());
+        AccountManager.authServers().remove(server.kind(), server.apiRoot());
         this.selectedFilter = 0;
         this.rebuildFilters();
         this.updateWidgets();

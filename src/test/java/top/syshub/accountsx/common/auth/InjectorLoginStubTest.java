@@ -213,7 +213,7 @@ class InjectorLoginStubTest {
 
         AuthServer server = registry.byApiRoot(apiRoot);
         assertThat(server.displayName()).isEqualTo("FakeInjector");
-        assertThat(server.locator()).isEqualTo(base);
+        assertThat(server.apiRoot()).isEqualTo(apiRoot);
         assertThat(server.oauth().clientId()).isEqualTo("fake-shared-client");
 
         JsonArray out = new JsonArray();

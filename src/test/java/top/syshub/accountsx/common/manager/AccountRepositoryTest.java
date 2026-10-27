@@ -183,9 +183,9 @@ class AccountRepositoryTest {
         repository.drop(alex);
         assertThat(repository.view()).containsExactly(steve);
 
-        // 连续变更合并写：串行通道只保证「排队的写被合并」，不保证合并到几次——
-        // 落盘 2 次还是 3 次取决于标脏与任务启动的竞态，唯一恒真的是「远少于 4 次」且最后一次是终态。
-        awaitWrites(writes, 2, "至少落盘 2 次");
+        // 连续变更合并写：串行通道只保证「排队的写被合并」，合并到 1~3 次取决于标脏与任务启动的竞态，
+        // 唯一恒真的是「不逐次落盘（< 4 次）」且最后一次是终态。
+        awaitWrites(writes, 1, "至少落盘 1 次");
         TimeUnit.MILLISECONDS.sleep(500);
         assertThat(writes).as("4 次变更不应逐次落盘").hasSizeLessThan(4);
         assertThat(writes.get(writes.size() - 1))

@@ -81,7 +81,7 @@ public class ServerScreen extends Screen {
         TaskScheduler.submit(() -> {
             Component failure = null;
             try {
-                AccountManager.authServers().ensure(AuthServerKind.YGGDRASIL, locator);
+                AccountManager.authServers().add(AuthServerKind.YGGDRASIL, locator);
             } catch (Exception e) {
                 String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 failure = Component.translatable("accountsx.account.server.fail", detail);

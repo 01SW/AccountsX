@@ -199,7 +199,7 @@ public final class YggdrasilDeviceCodeFlow {
         AuthServer active = server;
         if (!supportsDeviceCode(server)) {
             OAuthEndpoints discovered = discover(http, server.apiRoot(), knownClientIds);
-            active = new AuthServer(server.apiRoot(), server.kind(), server.displayName(), server.locator(),
+            active = new AuthServer(server.apiRoot(), server.kind(), server.displayName(),
                     discovered, server.cachedAt());
         }
 
@@ -218,7 +218,7 @@ public final class YggdrasilDeviceCodeFlow {
         YggdrasilAuthResult result = awaitToken(http, active, code, prompts::sleepMillis, () -> false);
         // 探测到的端点回写注册表，下次登录（含新界面）不再探测。
         if (active != server)
-            registry().updateOAuthEndpoints(server.apiRoot(), active.oauth());
+            registry().updateOAuthEndpoints(server.kind(), server.apiRoot(), active.oauth());
         return result;
     }
 

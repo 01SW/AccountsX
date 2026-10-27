@@ -88,7 +88,7 @@ class DeviceCodeFlowTest {
 
         AuthServerRegistry registry = new AuthServerRegistry(JdkHttpGateway.INSTANCE);
         AbstractInjectorAccountProvider.installRegistry(registry);
-        authServer = new AuthServer(apiRoot, AuthServerKind.YGGDRASIL, "FakeInjector", base,
+        authServer = new AuthServer(apiRoot, AuthServerKind.YGGDRASIL, "FakeInjector",
                 new OAuthEndpoints("fake-shared-client", apiRoot + "/oauth/token", apiRoot + "/oauth/device", null), 0L);
     }
 
@@ -109,10 +109,10 @@ class DeviceCodeFlowTest {
     void supportsDeviceCode_requiresAllThreeEndpoints() {
         assertThat(YggdrasilDeviceCodeFlow.supportsDeviceCode(authServer)).isTrue();
         assertThat(YggdrasilDeviceCodeFlow.supportsDeviceCode(new AuthServer(apiRoot, AuthServerKind.YGGDRASIL,
-                "FakeInjector", base, new OAuthEndpoints("fake-client", apiRoot + "/oauth/token", null, null), 0L)))
+                "FakeInjector", new OAuthEndpoints("fake-client", apiRoot + "/oauth/token", null, null), 0L)))
                 .isFalse();
         assertThat(YggdrasilDeviceCodeFlow.supportsDeviceCode(new AuthServer(apiRoot, AuthServerKind.YGGDRASIL,
-                "FakeInjector", base, null, 0L))).isFalse();
+                "FakeInjector", null, 0L))).isFalse();
     }
 
     @Test

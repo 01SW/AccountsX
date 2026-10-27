@@ -104,7 +104,7 @@ class AuthServerRegistryTest {
     }
 
     @Test
-    void ensure_probesOnceAndDedupsByLocator() throws Exception {
+    void ensure_probesOnceAndDedupsByApiRoot() throws Exception {
         AuthServer first = registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
         assertThat(first.apiRoot()).isEqualTo(API_ROOT);
         assertThat(first.displayName()).isEqualTo("FakeInjector");
@@ -113,7 +113,7 @@ class AuthServerRegistryTest {
         assertThat(gateway.count(API_ROOT)).isEqualTo(1);
         assertThat(changeEvents).hasSize(1);
 
-        // 同 locator 再登录：locator 短路 → 0 次 HEAD/GET
+        // 同 locator 再登录：会话内 locator → apiRoot 短路 → 0 次 HEAD/GET
         AuthServer second = registry.ensure(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
         assertThat(second.apiRoot()).isEqualTo(API_ROOT);
         assertThat(gateway.count(API_ROOT)).isEqualTo(1);
@@ -121,6 +121,20 @@ class AuthServerRegistryTest {
         assertThat(changeEvents).hasSize(1);
         // ensure 只新增自己一条：mojang / offline 在 load() 时补齐，fresh 注册表没有
         assertThat(registry.servers()).hasSize(1);
+    }
+
+    @Test
+    void add_overwritesSameApiRoot() throws Exception {
+        AuthServer first = registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+        assertThat(first.oauth().clientId()).isEqualTo("fake-shared-client");
+        assertThat(gateway.count(API_ROOT)).isEqualTo(1);
+
+        // 解析结果相同的地址再加一次：视为覆盖——重新探测，但列表里仍只有一条
+        AuthServer second = registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+        assertThat(second.apiRoot()).isEqualTo(API_ROOT);
+        assertThat(gateway.count(API_ROOT)).isEqualTo(2);
+        assertThat(registry.servers()).hasSize(1);
+        assertThat(changeEvents).hasSize(2);
     }
 
     @Test
@@ -167,7 +181,7 @@ class AuthServerRegistryTest {
         JsonArray stored = new JsonArray();
         // 3→4 种下的形状：oauth 只有 clientId/tokenEndpoint，无 apiRoot 的固定条目
         stored.add(JsonParser.parseString("{\"type\":\"yggdrasil\",\"apiRoot\":\"" + API_ROOT
-                + "\",\"futureField\":\"keep-me\",\"oauth\":{\"clientId\":\"fake-1214\",\"tokenEndpoint\":\"http://injector.test/oauth/token\"}}"));
+                + "\",\"locator\":\"http://injector.test\",\"futureField\":\"keep-me\",\"oauth\":{\"clientId\":\"fake-1214\",\"tokenEndpoint\":\"http://injector.test/oauth/token\"}}"));
         stored.add(JsonParser.parseString("{\"type\":\"mojang\"}"));
         registry.load(stored);
 
@@ -190,6 +204,8 @@ class AuthServerRegistryTest {
                 .noneMatch(j -> "mojang".equals(j.get("type").getAsString()))).isTrue();
         // 未建模字段原样回写：新→旧方向的字段不能被注册表吞掉
         assertThat(ygg.get("futureField").getAsString()).isEqualTo("keep-me");
+        // 已废弃的 locator 不再回写：老配置里的残留会被顺手清掉
+        assertThat(ygg.has("locator")).isFalse();
     }
 
     @Test
