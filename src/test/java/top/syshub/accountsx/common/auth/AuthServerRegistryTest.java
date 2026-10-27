@@ -166,6 +166,39 @@ class AuthServerRegistryTest {
     }
 
     @Test
+    void refreshAll_doesNotOverwriteStoredClientId() throws Exception {
+        // 迁移种下的 client_id 是账号 refresh token 的颁发方：预热探测只准补缺，不准替换。
+        JsonArray stored = new JsonArray();
+        stored.add(JsonParser.parseString("{\"type\":\"yggdrasil\",\"apiRoot\":\"" + API_ROOT
+                + "\",\"oauth\":{\"clientId\":\"fake-seeded\",\"tokenEndpoint\":\"" + API_ROOT + "/oauth/token\"}}"));
+        registry.load(stored);
+
+        registry.refreshAll(Map.of());
+
+        AuthServer kept = registry.byApiRoot(API_ROOT);
+        assertThat(kept.oauth().clientId()).isEqualTo("fake-seeded");
+        // 条目里缺的端点仍由探测补全，displayName 也照常刷新
+        assertThat(kept.oauth().deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
+        assertThat(kept.displayName()).isEqualTo("FakeInjector");
+    }
+
+    @Test
+    void add_keepsClientIdOfExistingEntry() throws Exception {
+        // 重复「添加认证服务器」同一个地址：端点刷新，client_id 保持原样
+        JsonArray stored = new JsonArray();
+        stored.add(JsonParser.parseString("{\"type\":\"yggdrasil\",\"apiRoot\":\"" + API_ROOT
+                + "\",\"oauth\":{\"clientId\":\"fake-seeded\"}}"));
+        registry.load(stored);
+
+        AuthServer readded = registry.add(AuthServerKind.YGGDRASIL, LOCATOR, Map.of());
+
+        assertThat(readded.oauth().clientId()).isEqualTo("fake-seeded");
+        assertThat(readded.oauth().tokenEndpoint()).isEqualTo(API_ROOT + "/oauth/token");
+        assertThat(readded.oauth().deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
+        assertThat(registry.servers()).hasSize(1);
+    }
+
+    @Test
     void loadPersist_roundTripKeepsMigrationShape() throws Exception {
         JsonArray stored = new JsonArray();
         // 3→4 种下的形状：oauth 只有 clientId/tokenEndpoint，无 apiRoot 的固定条目

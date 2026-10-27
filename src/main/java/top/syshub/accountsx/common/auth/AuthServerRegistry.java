@@ -149,7 +149,8 @@ public final class AuthServerRegistry {
 
     /**
      * 加服（UI 入口）：先 ALI 解析，再探测；{@code (kind, apiRoot)} 与现有条目相同则视为覆盖
-     * （重新探测并替换条目，用户的显式动作总是拿到最新元数据）。
+     * （重新探测并替换条目，用户的显式动作总是拿到最新元数据）——{@code client_id} 例外，
+     * 见 {@link #preserveClientId}。
      */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public AuthServer add(AuthServerKind kind, String locator, Map<String, String> knownClientIds)
@@ -163,16 +164,19 @@ public final class AuthServerRegistry {
         return store(kind, resolveApiRoot(kind, trimmed), knownClientIds);
     }
 
-    /** 探测并写入条目（同键覆盖），成功后触发持久化。 */
+    /** 探测并写入条目（同键覆盖，client_id 除外），成功后触发持久化。 */
     private AuthServer store(AuthServerKind kind, String apiRoot, Map<String, String> knownClientIds)
             throws IOException {
         AuthServer probed = probe(apiRoot, kind, knownClientIds);
+        AuthServer stored;
         synchronized (this) {
-            servers.put(new Key(kind, apiRoot), probed);
+            Key key = new Key(kind, apiRoot);
+            stored = preserveClientId(probed, servers.get(key));
+            servers.put(key, stored);
         }
         if (onChange != null)
             onChange.run();
-        return probed;
+        return stored;
     }
 
     /** 启动预热：clientId 默认取内置 host 表。 */
@@ -197,6 +201,7 @@ public final class AuthServerRegistry {
                         probed.displayName() != null ? probed.displayName() : server.displayName(),
                         OAuthEndpoints.merge(probed.oauth(), server.oauth()),
                         probed.cachedAt());
+                merged = preserveClientId(merged, server);
                 synchronized (this) {
                     Key key = new Key(server.kind(), server.apiRoot());
                     if (servers.containsKey(key))
@@ -209,6 +214,25 @@ public final class AuthServerRegistry {
         }
         if (changed && onChange != null)
             onChange.run();
+    }
+
+    /**
+     * 探测结果不得覆盖条目里已有的 {@code client_id}：它是账号 refresh token 的颁发方，
+     * 换一个就等于把已存账号的刷新链全部作废（界面也没有手改入口，换错了只能删服重建）。
+     * 条目还没有 client_id 时照常由探测填入，其余端点跟随探测更新。
+     */
+    private static AuthServer preserveClientId(AuthServer probed, AuthServer existing) {
+        if (existing == null || existing.oauth() == null)
+            return probed;
+        String clientId = existing.oauth().clientId();
+        OAuthEndpoints oauth = probed.oauth();
+        if (clientId == null || (oauth != null && clientId.equals(oauth.clientId())))
+            return probed;
+        OAuthEndpoints merged = oauth == null
+                ? new OAuthEndpoints(clientId, null, null, null)
+                : new OAuthEndpoints(clientId, oauth.tokenEndpoint(), oauth.deviceAuthorizationEndpoint(),
+                        oauth.userinfoEndpoint());
+        return new AuthServer(probed.apiRoot(), probed.kind(), probed.displayName(), merged, probed.cachedAt());
     }
 
     /** locator → apiRoot。Yggdrasil 走最多 10 跳 HEAD 解析；固定条目原样返回。 */
