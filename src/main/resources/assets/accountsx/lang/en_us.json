@@ -6,7 +6,7 @@
   "accountsx.account.general.add_account": "Add Account",
   "accountsx.account.general.login": "Login",
   "accountsx.account.general.operating": "Operating...",
-  "accountsx.account.oauth2.code.generating": "Generating OAuth2 Code",
+  "accountsx.account.external.code.generating": "Fetching Login Code",
   "accountsx.account.objects.player_name": "Player ID",
   "accountsx.account.objects.player_uuid": "Player UUID",
   "accountsx.account.objects.user_name": "User ID",

@@ -6,7 +6,7 @@
   "accountsx.account.general.add_account": "添加账户",
   "accountsx.account.general.login": "登陆",
   "accountsx.account.general.operating": "正在操作 ...",
-  "accountsx.account.oauth2.code.generating": "正在生成 OAuth2 代码",
+  "accountsx.account.external.code.generating": "正在获取登录码",
   "accountsx.account.objects.player_name": "玩家 ID",
   "accountsx.account.objects.player_uuid": "玩家 UUID",
   "accountsx.account.objects.user_name": "用户 ID",

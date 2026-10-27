@@ -140,7 +140,7 @@ public class ExternalLoginScreen extends LoginScreen {
             return;
         }
         this.busy = true;
-        this.status = Component.translatable("accountsx.account.oauth2.code.generating");
+        this.status = Component.translatable("accountsx.account.external.code.generating");
         long rid = ++this.requestId;
         this.updateWidgets();
 
