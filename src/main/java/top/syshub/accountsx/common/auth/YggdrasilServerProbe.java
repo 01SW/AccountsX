@@ -126,15 +126,10 @@ public final class YggdrasilServerProbe {
         String openidUrl = str(meta.get("feature.openid_configuration_url"));
         if (openidUrl == null)
             return null;
-        String host = null;
-        try {
-            host = URI.create(apiRoot).getHost();
-        } catch (IllegalArgumentException ignored) {
-        }
-        // clientId 只有两个来源：内置 host 表 > YGGC（Yggdrasil Connect）openid 配置里的 shared_client_id。
-        // 查表用的是 apiRoot 的 host——不是 ALI 解析过程中的域名（解析可能 301 跨域），
-        // OAuth 端点与 client_id 都属于最终 apiRoot。两处都取不到就判定该服务器不支持 OAuth。
-        String clientId = host == null || knownClientIds == null ? null : knownClientIds.get(host);
+        // clientId 只有两个来源：内置 apiRoot 表 > YGGC（Yggdrasil Connect）openid 配置里的 shared_client_id。
+        // 表的键就是 apiRoot 本身，不是主机名：client_id 按 API 根注册，同一域名可以有不同 API 根，
+        // 也不能用 ALI 解析过程中的中间域名（解析可能 301 跨域）。两处都取不到就判定该服务器不支持 OAuth。
+        String clientId = knownClientIds == null ? null : knownClientIds.get(OAuthClientIds.key(apiRoot));
         JsonObject config = http.get(openidUrl);
         String device = str(config.get("device_authorization_endpoint"));
         String token = str(config.get("token_endpoint"));

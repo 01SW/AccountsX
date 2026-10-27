@@ -12,7 +12,7 @@ import top.syshub.accountsx.common.net.HttpGateway;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 探针取 client_id 的顺序：内置 host 表 → YGGC openid 配置里的 shared_client_id → 视为不支持 OAuth。
+ * 探针取 client_id 的顺序：内置 apiRoot 表 → YGGC openid 配置里的 shared_client_id → 视为不支持 OAuth。
  * 根 meta 不提供 client_id：YGGC 规范把它放在 openid 配置里。网关全假，无网络。
  */
 class YggdrasilServerProbeTest {
@@ -98,7 +98,7 @@ class YggdrasilServerProbeTest {
     @Test
     void builtinTableWinsOverSharedClientId() throws IOException {
         OAuthEndpoints oauth = probeOAuth(YggdrasilFixtures.rootMeta(API_ROOT),
-                openidConfig(new com.google.gson.JsonPrimitive("26")), Map.of("injector.test", "fake-known"));
+                openidConfig(new com.google.gson.JsonPrimitive("26")), Map.of(API_ROOT, "fake-known"));
 
         assertThat(oauth).isNotNull();
         assertThat(oauth.clientId()).isEqualTo("fake-known");
@@ -135,11 +135,28 @@ class YggdrasilServerProbeTest {
     }
 
     @Test
+    void builtinTableIsKeyedByApiRootNotHost() throws IOException {
+        // 旧实现按 host 匹配；现在只认 apiRoot，主机名作键不再命中。
+        OAuthEndpoints oauth = probeOAuth(YggdrasilFixtures.rootMeta(API_ROOT), openidConfig(null),
+                Map.of("injector.test", "fake-known"));
+
+        assertThat(oauth).as("按主机名写的键不应命中").isNull();
+    }
+
+    @Test
+    void apiRootKeyIsNormalized() {
+        assertThat(OAuthClientIds.key("HTTPS://Skin.JSUMC.fun/api/yggdrasil/"))
+                .isEqualTo("https://skin.jsumc.fun/api/yggdrasil");
+        assertThat(OAuthClientIds.key("https://skin.jsumc.fun:443/api/yggdrasil"))
+                .isEqualTo("https://skin.jsumc.fun:443/api/yggdrasil");
+    }
+
+    @Test
     void withoutOpenidConfigurationServerHasNoOAuth() throws IOException {
         JsonObject root = YggdrasilFixtures.rootMeta(API_ROOT);
         root.getAsJsonObject("meta").remove("feature.openid_configuration_url");
 
-        OAuthEndpoints oauth = probeOAuth(root, null, Map.of("injector.test", "fake-known"));
+        OAuthEndpoints oauth = probeOAuth(root, null, Map.of(API_ROOT, "fake-known"));
 
         assertThat(oauth).isNull();
     }

@@ -144,7 +144,7 @@ public final class AuthServerRegistry {
 
     /** 加服（UI）：clientId 默认取内置 host 表。 */
     public AuthServer add(AuthServerKind kind, String locator) throws IOException {
-        return add(kind, locator, OAuthClientIds.BY_HOST);
+        return add(kind, locator, OAuthClientIds.defaults());
     }
 
     /**
@@ -177,7 +177,7 @@ public final class AuthServerRegistry {
 
     /** 启动预热：clientId 默认取内置 host 表。 */
     public void refreshAll() {
-        refreshAll(OAuthClientIds.BY_HOST);
+        refreshAll(OAuthClientIds.defaults());
     }
 
     /** 启动预热：逐个探测 injector 条目；失败保留旧条目（stale），不阻塞。 */
