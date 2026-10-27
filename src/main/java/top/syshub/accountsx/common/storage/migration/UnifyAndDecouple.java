@@ -198,7 +198,6 @@ public final class UnifyAndDecouple implements Migration {
             case "offline" -> "offline";
             case "microsoft" -> "microsoft";
             case "injector.authlib-injector" -> "yggdrasil";
-            case "injector.united" -> "united";
             default -> null;
         };
         if (type == null) {
@@ -228,7 +227,7 @@ public final class UnifyAndDecouple implements Migration {
         JsonObject oauthSeed = null;
         JsonObject credentials = null;
 
-        boolean injector = type.equals("yggdrasil") || type.equals("united");
+        boolean injector = "yggdrasil".equals(type);
         if (injector) {
             apiRoot = str(legacy.get("server"));
             if (apiRoot == null || apiRoot.isBlank()) {
@@ -251,13 +250,11 @@ public final class UnifyAndDecouple implements Migration {
                     if (accessToken != null)
                         credentials.addProperty("accessToken", accessToken);
                     credentials.addProperty("refreshToken", str(envelope.get("refresh_token")));
-                    if (type.equals("yggdrasil")) {
-                        // token_endpoint / client_id 归服务器：先种进 servers 的 oauth 块，
-                        // 首次探测（P3.1）再从 OIDC 元数据补全 device/userinfo 端点。
-                        oauthSeed = new JsonObject();
-                        oauthSeed.addProperty("clientId", str(envelope.get("client_id")));
-                        oauthSeed.addProperty("tokenEndpoint", str(envelope.get("token_endpoint")));
-                    }
+                    // token_endpoint / client_id 归服务器：先种进 servers 的 oauth 块，
+                    // 首次探测（P3.1）再从 OIDC 元数据补全 device/userinfo 端点。
+                    oauthSeed = new JsonObject();
+                    oauthSeed.addProperty("clientId", str(envelope.get("client_id")));
+                    oauthSeed.addProperty("tokenEndpoint", str(envelope.get("token_endpoint")));
                 }
             } else if (accessToken != null || loginToken != null) {
                 credentials = new JsonObject();

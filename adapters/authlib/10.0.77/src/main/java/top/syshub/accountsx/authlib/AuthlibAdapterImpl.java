@@ -48,7 +48,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 /**
  * authlib 10.0.77：YggdrasilAuthenticationService 已删除，改为
  * {@link MinecraftServicesDiscoveryService} + 合成 {@link DiscoveryResponse}，
- * 以兼容 authlib-injector / United-Injector 的固定路径 Yggdrasil 端点。
+ * 以兼容 authlib-injector 的固定路径 Yggdrasil 端点。
  */
 public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImpl> {
 

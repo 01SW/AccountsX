@@ -4,7 +4,7 @@ AI agent 和所有开发者的项目权威手册。保持与代码同步；任�
 
 ## 项目简介
 
-Accounts X 是一个**客户端 Fabric 模组**，用于 Minecraft 多账号切换。支持离线账号、Microsoft（device-code OAuth）、Authlib-Injector（第三方 Yggdrasil）和 United-Injector 账号，以及启动器提供的环境账号。
+Accounts X 是一个**客户端 Fabric 模组**，用于 Minecraft 多账号切换。支持离线账号、Microsoft（device-code OAuth）、Authlib-Injector（第三方 Yggdrasil）账号，以及启动器提供的环境账号。
 
 - 基础包：`top.syshub.accountsx`
 - Java **25**（`sourceCompatibility` / `targetCompatibility`）
@@ -63,7 +63,7 @@ AccountsX（根项目 / common）
 │   │   │   ├── AccountUUID.java
 │   │   │   ├── BaseAccount.java         # 基类，含嵌套 AccountStorage
 │   │   │   ├── impl/env/                # 环境账号（启动器会话）
-│   │   │   ├── impl/injector/           # Authlib-Injector + United-Injector
+│   │   │   ├── impl/injector/           # Authlib-Injector
 │   │   │   ├── impl/microsoft/          # Microsoft device-code OAuth
 │   │   │   ├── impl/offline/            # 离线账号
 │   │   │   └── model/                   # AccountType 枚举、AccountState、Auth* 上下文
@@ -88,7 +88,7 @@ AccountsX（根项目 / common）
 │   └── ├── buildSrc/                        # 预编译 Gradle 插件（3 个）
 └── src/main/resources/
     ├── fabric.mod.json              # 核心模组元数据
-    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 58 个 key）
+    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 56 个 key）
     └── assets/accountsx/textures/gui/  # GUI 资源单一数据源：account.png（切换图标）、
                                         #  sprites/icon/account.png（标题屏精灵）、alex_avatar.png（默认头像）
 ```
@@ -121,7 +121,6 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
   - `OFFLINE`（configId: `"offline"`）
   - `MICROSOFT`（configId: `"microsoft"`）— device-code OAuth
   - `AUTHLIB_INJECTOR`（configId: `"injector.authlib-injector"`）— 第三方 Yggdrasil
-  - `UNITED_INJECTOR`（configId: `"injector.united"`）— 联合通行证
 - Provider 实现 `refresh` / `createAccountContext`，以及该类型自己的建号方法（外置认证 `loginPassword` / `loginDeviceCode`、离线 `login(name, uuid)`、微软 `requestDeviceCode` / `loginDeviceCode`）
 - 登录上下文是 `AccountContext(AuthServerContext, AuthSecurityContext, AuthPolicy)`，用于构建 authlib session
 

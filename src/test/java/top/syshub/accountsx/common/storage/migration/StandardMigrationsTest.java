@@ -122,7 +122,7 @@ class StandardMigrationsTest {
         return doc("{\"version\":3,\"id\":\"" + ID + "\"}");
     }
 
-    private String fiveAccountPayload() {
+    private String legacyPayload() {
         String b64 = Base64.getEncoder().encodeToString(new byte[]{1, 2, 3, 4});
         return "["
                 + "{\"type\":\"offline\",\"storage\":{\"playerName\":\"Steve\",\"playerUUID\":\"069a79f4-44e9-4726-a5befca90e38aaf5\"}},"
@@ -132,6 +132,7 @@ class StandardMigrationsTest {
                 + "\"server\":\"https://mcskin.ecustvr.top/api/yggdrasil\",\"loginToken\":\"fake-ygg-token\",\"accountName\":\"ECUSTMC\",\"avatarKey\":\"fake-key-1\"},"
                 + oauthAccountJson()
                 + ","
+                // 统一通行证类型已移除：迁移应告警并跳过该条目，其余账号照常转换
                 + "{\"type\":\"injector.united\",\"storage\":{\"accessToken\":\"fake-united-token\",\"playerName\":\"Alex\",\"playerUUID\":\"cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa\"},"
                 + "\"server\":\"https://auth.mc-user.com:233/0123456789abcdef0123456789abcdef\",\"loginToken\":\"fake-united-token\",\"accountName\":\"UnitedPass\",\"avatar\":\"" + b64 + "\"}"
                 + "]";
@@ -159,14 +160,14 @@ class StandardMigrationsTest {
     @Test
     void hop3to4_convertsAllLegacyShapesAndCleansUp() throws Exception {
         writeInstanceConfig(ID);
-        writePayload(ID, fiveAccountPayload());
-        byte[] png = {1, 2, 3, 4};
+        writePayload(ID, legacyPayload());
 
         JsonObject out = new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
 
         assertThat(out.get("version").getAsInt()).isEqualTo(4);
         JsonArray accounts = out.getAsJsonArray("accounts");
-        assertThat(accounts).hasSize(5);
+        assertThat(accounts).hasSize(4);
+        assertThat(accounts.toString()).doesNotContain("\"united\"");
 
         // offline：uuid 归一为无横线 32 位 hex，无 credentials
         JsonObject offline = accounts.get(0).getAsJsonObject();
@@ -194,17 +195,8 @@ class StandardMigrationsTest {
         assertThat(oauth.getAsJsonObject("credentials").get("accessToken").getAsString()).isEqualTo("fake-ls-at");
         assertThat(oauth.has("loginToken")).isFalse();
 
-        // united：accessToken + 旧 base64 头像外移为内容哈希 PNG
-        JsonObject united = accounts.get(4).getAsJsonObject();
-        assertThat(united.get("type").getAsString()).isEqualTo("united");
-        assertThat(united.getAsJsonObject("credentials").get("accessToken").getAsString()).isEqualTo("fake-united-token");
-        String expectedKey = AvatarCache.hash(png);
-        assertThat(united.get("avatarKey").getAsString()).isEqualTo(expectedKey);
-        assertThat(united.has("avatar")).isFalse();
-        assertThat(Files.readAllBytes(avatarDir.resolve(expectedKey + ".png"))).isEqualTo(png);
-
-        // servers：3 个真实（2 yggdrasil + 1 united），无 builtin mojang/offline
-        assertThat(out.getAsJsonArray("servers")).hasSize(3);
+        // servers：2 个真实 yggdrasil，无 builtin mojang/offline、无 united
+        assertThat(out.getAsJsonArray("servers")).hasSize(2);
         JsonObject lsServer = findServer(out, "https://littleskin.cn/api/yggdrasil");
         assertThat(lsServer.get("displayName").getAsString()).isEqualTo("LittleSkin");
         assertThat(lsServer.getAsJsonObject("oauth").get("clientId").getAsString()).isEqualTo("1214");
@@ -214,7 +206,7 @@ class StandardMigrationsTest {
         // 全局文件已落盘（先落盘再删旧文件）
         JsonObject onDisk = JsonParser.parseString(Files.readString(global, StandardCharsets.UTF_8)).getAsJsonObject();
         assertThat(onDisk.get("version").getAsInt()).isEqualTo(4);
-        assertThat(onDisk.getAsJsonArray("accounts")).hasSize(5);
+        assertThat(onDisk.getAsJsonArray("accounts")).hasSize(4);
 
         // 旧文件处理（方案 C）：载荷被删、目录空了被删、实例配置改名 .migrated
         assertThat(Files.exists(legacyHome.resolve(ID + ".json"))).isFalse();

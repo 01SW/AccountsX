@@ -332,10 +332,7 @@ class AccountRepositoryTest {
                 "{\"type\":\"offline\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"" + uuid + "\"}}",
                 "{\"type\":\"microsoft\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"" + uuid
                         + "\"},\"credentials\":{\"accessToken\":\"fake-mc\",\"refreshToken\":\"fake-r\"}}",
-                migratedOauthFixture(uuid),
-                "{\"type\":\"united\",\"server\":\"https://auth.mc-user.com:233/0123456789abcdef0123456789abcdef\","
-                        + "\"profile\":{\"name\":\"Alex\",\"uuid\":\"" + uuid + "\"},"
-                        + "\"credentials\":{\"accessToken\":\"fake-u\"}}");
+                migratedOauthFixture(uuid));
 
         for (String fixture : fixtures) {
             JsonObject v4 = JsonParser.parseString(fixture).getAsJsonObject();

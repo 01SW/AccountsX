@@ -10,7 +10,6 @@ import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccoun
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.auth.AuthServer;
-import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.task.TaskScheduler;
@@ -42,10 +41,7 @@ public class ExternalLoginScreen extends LoginScreen {
     public ExternalLoginScreen(Screen parent, AuthServer server) {
         super(parent, "accountsx.account.general.login", label(server));
         this.server = server;
-        AccountType type = server.kind() == AuthServerKind.UNITED
-                ? AccountType.UNITED_INJECTOR
-                : AccountType.AUTHLIB_INJECTOR;
-        this.provider = (AbstractInjectorAccountProvider<?>) type.getAccountProvider();
+        this.provider = (AbstractInjectorAccountProvider<?>) AccountType.AUTHLIB_INJECTOR.getAccountProvider();
         this.oauthAvailable = YggdrasilDeviceCodeFlow.supportsDeviceCode(server);
         this.oauthMode = this.oauthAvailable;
     }

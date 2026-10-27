@@ -166,12 +166,6 @@ class AuthServerRegistryTest {
     }
 
     @Test
-    void resolveApiRoot_unitedConcat() throws Exception {
-        assertThat(registry.resolveApiRoot(AuthServerKind.UNITED, "0123456789abcdef0123456789abcdef"))
-                .isEqualTo("https://auth.mc-user.com:233/0123456789abcdef0123456789abcdef");
-    }
-
-    @Test
     void loadPersist_roundTripKeepsMigrationShape() throws Exception {
         JsonArray stored = new JsonArray();
         // 3→4 种下的形状：oauth 只有 clientId/tokenEndpoint，无 apiRoot 的固定条目

@@ -10,7 +10,6 @@ import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
-import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAccountProvider;
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftAccount;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
@@ -324,7 +323,7 @@ public final class AccountRepository {
 
     static BaseAccount fromJson(JsonObject jo, JsonArray servers) {
         String type = str(jo.get("type"));
-        // v4 用短 kind（yggdrasil / united），旧链路用 configId：两边都认
+        // v4 用短 kind（yggdrasil），旧链路用 configId：两边都认
         AccountType accountType = type == null ? null : byConfigId(type);
         if (accountType == null)
             accountType = byKind(type);
@@ -352,8 +351,6 @@ public final class AccountRepository {
                     account.setLoginTokenForMigration("OAuth " + envelope, uuid32(str(profile.get("uuid"))));
                 yield account;
             }
-            case UNITED_INJECTOR -> new UnitedInjectorAccountProvider.UnitedInjectorAccount(
-                    accessToken, name, uuid, server, uuid32(str(profile.get("uuid"))), null, avatarKey, 0L);
             default -> null;
         };
     }
@@ -410,7 +407,6 @@ public final class AccountRepository {
             return null;
         return switch (kind) {
             case "yggdrasil" -> AccountType.AUTHLIB_INJECTOR;
-            case "united" -> AccountType.UNITED_INJECTOR;
             case "offline" -> AccountType.OFFLINE;
             case "microsoft" -> AccountType.MICROSOFT;
             default -> null;

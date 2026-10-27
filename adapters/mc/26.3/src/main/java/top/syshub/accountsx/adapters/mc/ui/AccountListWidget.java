@@ -209,7 +209,7 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
 
                 AccountType type = account.getAccountType();
                 UUID uuid = account.getAccountStorage().getPlayerUUID();
-                String server = type == AccountType.AUTHLIB_INJECTOR || type == AccountType.UNITED_INJECTOR ?
+                String server = type == AccountType.AUTHLIB_INJECTOR ?
                         ((AbstractInjectorAccount) account).getServer() : "";
                 String textureKey = type.toString() + "_" + uuid.toString() + "_" + server;
                 UUID textureUUID = UUID.nameUUIDFromBytes(textureKey.getBytes(StandardCharsets.UTF_8));

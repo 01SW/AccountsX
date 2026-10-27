@@ -4,8 +4,7 @@ package top.syshub.accountsx.common.auth;
 public enum AuthServerKind {
     MOJANG("mojang"),
     OFFLINE("offline"),
-    YGGDRASIL("yggdrasil"),
-    UNITED("united");
+    YGGDRASIL("yggdrasil");
 
     private final String v4type;
 

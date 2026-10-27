@@ -9,7 +9,6 @@ import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount;
 import top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccountProvider;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
-import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAccountProvider;
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftAccount;
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftAccountProvider;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
@@ -27,8 +26,7 @@ public enum AccountType {
     ENV_DEFAULT(EnvironmentAccount.class, new EnvironmentAccountProvider(Platforms.getHttpGateway()), null, null),
     OFFLINE(OfflineAccount.class, new OfflineAccountProvider(Platforms.getHttpGateway()), "offline", "offline"),
     MICROSOFT(MicrosoftAccount.class, new MicrosoftAccountProvider(Platforms.getHttpGateway()), "microsoft", "microsoft"),
-    AUTHLIB_INJECTOR(AuthlibInjectorAccountProvider.AuthlibInjectorAccount.class, new AuthlibInjectorAccountProvider(Platforms.getHttpGateway()), "injector.authlib-injector", "yggdrasil"),
-    UNITED_INJECTOR(UnitedInjectorAccountProvider.UnitedInjectorAccount.class, new UnitedInjectorAccountProvider(Platforms.getHttpGateway()), "injector.united", "united");
+    AUTHLIB_INJECTOR(AuthlibInjectorAccountProvider.AuthlibInjectorAccount.class, new AuthlibInjectorAccountProvider(Platforms.getHttpGateway()), "injector.authlib-injector", "yggdrasil");
 
     public static final AccountType[] VALUES = values();
 

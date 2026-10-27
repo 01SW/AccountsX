@@ -211,11 +211,10 @@ public final class AuthServerRegistry {
             onChange.run();
     }
 
-    /** locator → apiRoot。United 是固定前缀拼接；Yggdrasil 走最多 10 跳 HEAD 解析。 */
+    /** locator → apiRoot。Yggdrasil 走最多 10 跳 HEAD 解析；固定条目原样返回。 */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public String resolveApiRoot(AuthServerKind kind, String locator) throws IOException {
         return switch (kind) {
-            case UNITED -> "https://auth.mc-user.com:233/" + locator;
             case YGGDRASIL -> YggdrasilServerProbe.resolveApiRoot(locator, http);
             case MOJANG, OFFLINE -> locator;
         };
