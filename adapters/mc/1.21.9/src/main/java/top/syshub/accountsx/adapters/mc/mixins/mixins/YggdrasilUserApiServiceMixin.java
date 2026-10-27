@@ -34,10 +34,16 @@ public class YggdrasilUserApiServiceMixin {
     private Environment environment;
 
     @Unique
-    private static final String AUTHLIB_INJECTOR_NAME = "Authlib-Injector";
+    private static final String MOJANG_SERVICES_HOST = "https://api.minecraftservices.com";
 
-    private boolean isAuthlibInjector() {
-        return AUTHLIB_INJECTOR_NAME.equals(environment.name());
+    /**
+     * 只按本实例持有的 environment 判定，不引入“当前账号”式全局可变状态：
+     * Mojang 正式环境的 servicesHost 固定，第三方注入（authlib-injector）指向自己的 API 根。
+     */
+    @Unique
+    private boolean isThirdPartySession() {
+        String host = environment.servicesHost();
+        return host == null || !host.startsWith(MOJANG_SERVICES_HOST);
     }
 
     @Inject(
@@ -47,7 +53,7 @@ public class YggdrasilUserApiServiceMixin {
             remap = false
     )
     private void defaultAttributes(CallbackInfoReturnable<UserApiService.UserProperties> cir) {
-        if (isAuthlibInjector())
+        if (isThirdPartySession())
             cir.setReturnValue(new UserApiService.UserProperties(
                 ImmutableSet.of(
                         UserApiService.UserFlag.CHAT_ALLOWED,
@@ -65,7 +71,7 @@ public class YggdrasilUserApiServiceMixin {
             remap = false
     )
     private void notBlockedPlayer(UUID playerID, CallbackInfoReturnable<Boolean> cir) {
-        if (isAuthlibInjector()) cir.setReturnValue(false);
+        if (isThirdPartySession()) cir.setReturnValue(false);
     }
 
     @Inject(
@@ -75,7 +81,7 @@ public class YggdrasilUserApiServiceMixin {
             remap = false
     )
     private void blankBlockList(CallbackInfo ci) {
-        if (isAuthlibInjector()) ci.cancel();
+        if (isThirdPartySession()) ci.cancel();
     }
 
     @Inject(
@@ -85,7 +91,7 @@ public class YggdrasilUserApiServiceMixin {
             remap = false
     )
     private void getKeyPair(CallbackInfoReturnable<KeyPairResponse> cir) {
-        if (isAuthlibInjector()) {
+        if (isThirdPartySession()) {
             KeyPairGenerator generator;
             try {
                 generator = KeyPairGenerator.getInstance("RSA");
