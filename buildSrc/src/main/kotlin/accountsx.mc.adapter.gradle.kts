@@ -70,7 +70,7 @@ val prepareAdapterSources = tasks.register("prepareAdapterSources") {
     description = "Resolve effective Java sources from the version chain"
 
     val matrix = AdapterMatrix.load(rootDirFile)
-    val lineage = matrix.mc.subList(0, matrix.mc.indexOfFirst { it.version == adapterVersion } + 1).map { it.version }
+    val lineage = AdapterSourceResolver.lineageOf(matrix, adapterVersion)
 
     inputs.property("targetVersion", adapter.version)
     inputs.property("lineage", lineage)
@@ -92,15 +92,7 @@ val prepareAdapterSources = tasks.register("prepareAdapterSources") {
         val matrix = AdapterMatrix.load(rootDirFile)
         val resolved = AdapterSourceResolver.resolve(matrix, rootDirFile, adapterVersion)
 
-        val outDir = generatedSourcesDir.get().asFile
-        outDir.deleteRecursively()
-        outDir.mkdirs()
-
-        for ((rel, file) in resolved.effectiveFiles) {
-            val dest = File(outDir, rel)
-            dest.parentFile.mkdirs()
-            file.copyTo(dest, overwrite = true)
-        }
+        AdapterSourceResolver.syncTo(generatedSourcesDir.get().asFile, resolved)
 
         val reportDir = provenanceReportDir.get().asFile
         reportDir.mkdirs()

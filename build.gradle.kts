@@ -1,4 +1,5 @@
 import accountsx.build.AdapterMatrix
+import accountsx.build.AdapterSourceResolverSelfTest
 import accountsx.build.McAdapter
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -331,6 +332,29 @@ abstract class CheckArchitecture : DefaultTask() {
                 violations.joinToString("\n") { "  $it" }
         }
         logger.lifecycle("checkArchitecture: PASSED")
+    }
+}
+
+/**
+ * Run the adapter source resolver self-tests (P5.0).
+ *
+ * The resolver decides which Java file an adapter actually compiles. A wrong answer
+ * still compiles, so the rules are pinned by fixtures here instead of being caught by
+ * a compile error or by inspecting the real adapter tree.
+ */
+abstract class CheckAdapterSourceResolver : DefaultTask() {
+
+    @get:OutputDirectory
+    val workDir: DirectoryProperty = project.objects.directoryProperty()
+
+    @TaskAction
+    fun run() {
+        val failures = AdapterSourceResolverSelfTest.run(workDir.get().asFile)
+        require(failures.isEmpty()) {
+            "checkAdapterSourceResolver FAILED - " + failures.size + " rule(s) violated:\n" +
+                failures.joinToString("\n") { "  " + it }
+        }
+        logger.lifecycle("checkAdapterSourceResolver: PASSED")
     }
 }
 
@@ -690,10 +714,17 @@ val validateAdapterMatrix = tasks.register<ValidateAdapterMatrix>("validateAdapt
     rootDir.set(rootProjectDir)
 }
 
+val checkAdapterSourceResolver = tasks.register<CheckAdapterSourceResolver>("checkAdapterSourceResolver") {
+    group = "verification"
+    description = "Run fixture-based self-tests for the adapter source fallback resolver"
+    workDir.set(layout.buildDirectory.dir("adapter-source-resolver-selftest"))
+}
+
 tasks.build {
     dependsOn(universal)
     dependsOn(checkArchitecture)
     dependsOn(validateAdapterMatrix)
+    dependsOn(checkAdapterSourceResolver)
 }
 
 tasks.withType<JavaCompile> {

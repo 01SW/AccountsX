@@ -11,6 +11,9 @@ import java.io.File
  * @param obfuscated   false for MC 26.1+ (no ProGuard): plain `fabric-loom` + `jar`,
  *                     no `officialMojangMappings()`, no `mod*` configurations
  * @param loader       Fabric Loader version (defaults to the version catalog)
+ * @param sourceBase   optional override of the source-fallback parent: another declared MC version,
+ *                     or {@code "none"} to start a new root; null keeps the default "previous version"
+ * @param java         bytecode target for this adapter
  */
 data class McAdapter(
     val version: String,
@@ -19,7 +22,8 @@ data class McAdapter(
     val modmenu: String,
     val obfuscated: Boolean,
     val loader: String?,
-    val java: String
+    val java: String,
+    val sourceBase: String? = null
 ) {
     val projectPath: String get() = "adapters:mc:$version"
 
@@ -70,7 +74,8 @@ class AdapterMatrix(
                     modmenu = row.string("mc", "modmenu"),
                     java = (row["java"] as? String) ?: "17",
                     obfuscated = row.boolean("mc", "obfuscated"),
-                    loader = row["loader"] as String?
+                    loader = row["loader"] as String?,
+                    sourceBase = row["sourceBase"] as String?
                 )
             }
             val authlib = tables["authlib"].orEmpty().map { row ->

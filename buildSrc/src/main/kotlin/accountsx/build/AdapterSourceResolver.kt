@@ -10,10 +10,52 @@ data class ResolvedSources(
     val lineage: List<String>
 )
 
+/**
+ * 逐版本源码回落：沿来源链从最早节点折叠到目标版本，同路径较新实现覆盖旧实现。
+ *
+ * <p>只做文件级覆盖，不做方法级合并；解析与 Gradle/Loom 无关，可直接用临时目录 fixture 测试
+ * （见 {@link AdapterSourceResolverSelfTest}）。</p>
+ */
 object AdapterSourceResolver {
 
     private const val JAVA_ROOT = "src/main/java"
     private const val REMOVALS_FILE = "source-removals.txt"
+
+    /** 目标版本的来源链，从最早节点排到目标自身；{@code sourceBase = "none"} 切断继承。 */
+    fun lineageOf(matrix: AdapterMatrix, targetVersion: String): List<String> {
+        val index = matrix.mc.indexOfFirst { it.version == targetVersion }
+        require(index >= 0) { "Target version '$targetVersion' not in matrix" }
+        val chain = ArrayList<String>()
+        val seen = LinkedHashSet<String>()
+        var current: McAdapter? = matrix.mc[index]
+        while (current != null) {
+            require(seen.add(current.version)) {
+                "Source chain for '$targetVersion' contains a cycle at '${current.version}'"
+            }
+            chain.add(current.version)
+            current = parentOf(matrix, targetVersion, current)
+        }
+        chain.reverse()
+        return chain
+    }
+
+    private fun parentOf(matrix: AdapterMatrix, targetVersion: String, child: McAdapter): McAdapter? {
+        val childIndex = matrix.mc.indexOfFirst { it.version == child.version }
+        return when (val base = child.sourceBase) {
+            null -> matrix.mc.getOrNull(childIndex - 1)
+            "none" -> null
+            else -> {
+                val parentIndex = matrix.mc.indexOfFirst { it.version == base }
+                require(parentIndex >= 0) {
+                    "sourceBase '$base' of '${child.version}' is not a declared MC version (needed by '$targetVersion')"
+                }
+                require(parentIndex < childIndex) {
+                    "sourceBase '$base' of '${child.version}' must name an earlier version than '${child.version}'"
+                }
+                matrix.mc[parentIndex]
+            }
+        }
+    }
 
     fun resolve(
         matrix: AdapterMatrix,
@@ -21,7 +63,7 @@ object AdapterSourceResolver {
         targetVersion: String,
         adapterRoot: (String) -> File = { v -> File(rootDir, "adapters/mc/$v") }
     ): ResolvedSources {
-        val lineage = buildLineage(matrix, targetVersion)
+        val lineage = lineageOf(matrix, targetVersion)
 
         for (v in lineage) {
             val dir = adapterRoot(v)
@@ -30,51 +72,62 @@ object AdapterSourceResolver {
 
         val effective = LinkedHashMap<String, File>()
         val owners = LinkedHashMap<String, String>()
-        val allDeletions = mutableListOf<String>()
+        val deletions = mutableListOf<String>()
+        // 曾经进入过链的路径。删除清单允许沿用上一版的同一份文件（重复声明视为已删除），
+        // 但不许写一个从未存在过的路径——那说明清单过期或拼错了，静默跳过只会掩盖问题。
+        val known = LinkedHashSet<String>()
 
         for (version in lineage) {
             val adapterDir = adapterRoot(version)
 
-            val removals = readRemovals(File(adapterDir, REMOVALS_FILE))
-            for (rel in removals) {
+            for (rel in readRemovals(File(adapterDir, REMOVALS_FILE))) {
                 val normalized = normalizeRelPath(rel)
-                if (!effective.containsKey(normalized)) {
-                    continue
+                require(known.contains(normalized)) {
+                    "source-removals.txt in $adapterDir references '$normalized', " +
+                        "which never entered the chain for '$targetVersion'"
                 }
-                effective.remove(normalized)
-                owners.remove(normalized)
-                allDeletions.add(normalized)
+                if (effective.remove(normalized) != null) {
+                    owners.remove(normalized)
+                    deletions.add(normalized)
+                }
             }
 
             val javaDir = File(adapterDir, JAVA_ROOT)
-            if (javaDir.isDirectory) {
-                javaDir.walkTopDown()
-                    .filter { it.isFile && it.name.endsWith(".java") }
-                    .forEach { file ->
-                        val rel = file.relativeTo(javaDir).invariantSeparatorsPath
-                        validatePackage(file, rel)
-                        effective[rel] = file
-                        owners[rel] = version
-                    }
+            if (!javaDir.isDirectory) continue
+
+            val files = javaDir.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".java") }
+                .map { it to it.relativeTo(javaDir).invariantSeparatorsPath }
+                .sortedBy { it.second }
+            for ((file, rel) in files) {
+                validatePackage(file, rel)
+                known.add(rel)
+                effective[rel] = file
+                owners[rel] = version
             }
         }
 
+        validateCaseCollisions(effective)
         validateFqcnUniqueness(effective)
 
         return ResolvedSources(
             targetVersion = targetVersion,
             effectiveFiles = effective,
             owners = owners,
-            deletions = allDeletions,
+            deletions = deletions,
             lineage = lineage
         )
     }
 
-    private fun buildLineage(matrix: AdapterMatrix, targetVersion: String): List<String> {
-        val mcVersions = matrix.mc.map { it.version }
-        val targetIndex = mcVersions.indexOf(targetVersion)
-        require(targetIndex >= 0) { "Target version '$targetVersion' not in matrix" }
-        return mcVersions.subList(0, targetIndex + 1).toList()
+    /** 把有效源码同步到目标目录：先清空，保证被删除的源不在生成目录里留下旧文件。 */
+    fun syncTo(outDir: File, resolved: ResolvedSources) {
+        outDir.deleteRecursively()
+        outDir.mkdirs()
+        for ((rel, file) in resolved.effectiveFiles) {
+            val dest = File(outDir, rel)
+            dest.parentFile.mkdirs()
+            file.copyTo(dest, overwrite = true)
+        }
     }
 
     private fun readRemovals(file: File): List<String> {
@@ -85,12 +138,11 @@ object AdapterSourceResolver {
     }
 
     private fun normalizeRelPath(rel: String): String {
-        require(!rel.startsWith("/") && !rel.startsWith("\\"))
-        require(!rel.contains(".."))
-        require(!rel.contains("\\"))
-        val normalized = rel.replace('\\', '/')
-        require(!normalized.contains("//"))
-        require(normalized.endsWith(".java"))
+        require(!rel.startsWith("/") && !rel.startsWith("\\")) { "Removal path must be relative: '$rel'" }
+        require(!rel.contains("..")) { "Removal path must not contain '..': '$rel'" }
+        val normalized = rel.replace('\u005C', '/')
+        require(!normalized.contains("//")) { "Removal path must not contain '//': '$rel'" }
+        require(normalized.endsWith(".java")) { "Removal path must be a .java file: '$rel'" }
         return normalized
     }
 
@@ -106,6 +158,19 @@ object AdapterSourceResolver {
             throw IllegalArgumentException(
                 "Package mismatch in ${file.absolutePath}: declared '$declared', expected '$expectedPackage'"
             )
+        }
+    }
+
+    /** 大小写不同的两个路径在 Windows/macOS 上是同一个文件，跨版本覆盖会随机胜出，必须拒绝。 */
+    private fun validateCaseCollisions(effective: Map<String, File>) {
+        val seen = HashMap<String, String>()
+        for (rel in effective.keys) {
+            val prev = seen.put(rel.lowercase(), rel)
+            if (prev != null && prev != rel) {
+                throw IllegalArgumentException(
+                    "Path collision differing only by case: '$prev' and '$rel'"
+                )
+            }
         }
     }
 
