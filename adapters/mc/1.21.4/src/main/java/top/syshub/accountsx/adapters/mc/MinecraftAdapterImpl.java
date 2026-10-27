@@ -4,7 +4,6 @@ import com.mojang.authlib.minecraft.MinecraftSessionService;
 import com.mojang.authlib.minecraft.UserApiService;
 import com.mojang.authlib.yggdrasil.ProfileResult;
 import com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService;
-import com.mojang.blaze3d.platform.ClipboardManager;
 import top.syshub.accountsx.adapters.mc.mixins.PlayerSkinProviderAccessor;
 import top.syshub.accountsx.adapters.mc.mixins.mixins.MinecraftClientAccessor;
 import top.syshub.accountsx.adapters.mc.mixins.mixins.SplashTextResourceSupplierAccessor;
@@ -101,12 +100,7 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
 
     @Override
     public void copyText(String text) {
-        Minecraft client = Minecraft.getInstance();
-        if (client.isSameThread()) {
-            new ClipboardManager().setClipboard(client.getWindow().getWindow(), text);
-        } else {
-            client.schedule(() -> copyText(text));
-        }
+        new PlatformOps().copyText(text);
     }
 
     @Override
