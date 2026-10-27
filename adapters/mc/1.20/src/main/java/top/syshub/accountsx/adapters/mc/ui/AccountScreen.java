@@ -13,6 +13,7 @@ import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
+import top.syshub.accountsx.common.ui.SelectionStyle;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -164,8 +165,11 @@ public class AccountScreen extends Screen {
         context.fill(0, 0, SIDEBAR_W, this.height, 0x66000000);
         context.fill(SIDEBAR_W, 0, SIDEBAR_W + 2, this.height, 0x40FFFFFF);
 
+        // 选中筛选项：外圈垫在控件下面露出来；与登录界面的模式切换共用 SelectionStyle。
         int selectedY = PAD + 12 + BTN_H + 16 + this.selectedFilter * (BTN_H + BTN_GAP);
-        context.fill(PAD - 3, selectedY - 2, SIDEBAR_W - PAD + 3, selectedY + BTN_H + 2, 0x5090A0FF);
+        context.fill(PAD - SelectionStyle.INSET_X, selectedY - SelectionStyle.INSET_Y,
+                SIDEBAR_W - PAD + SelectionStyle.INSET_X, selectedY + BTN_H + SelectionStyle.INSET_Y,
+                SelectionStyle.FRAME);
 
         this.accountListWidget.render(context, mouseX, mouseY, delta);
         super.render(context, mouseX, mouseY, delta);

@@ -14,6 +14,7 @@ import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.task.TaskScheduler;
+import top.syshub.accountsx.common.ui.SelectionStyle;
 
 /**
  * 外置认证登录界面（OAuth / 密码两种方式）。
@@ -275,20 +276,33 @@ public class ExternalLoginScreen extends LoginScreen {
         Platforms.getMinecraftPlatform().copyText(url == null ? code.verificationUri() : url);
     }
 
+    /** 当前模式的底色标记：按钮本身没有 selected 样式，用与左侧筛选栏相同的背景带表达选中。 */
+    private int modeX() {
+        return this.oauthMode ? this.contentX() : this.contentX() + TOGGLE_W + PAD;
+    }
+
+    private int modeWidth() {
+        return this.oauthMode ? TOGGLE_W : INPUT_W - TOGGLE_W - PAD;
+    }
+
+    /** 选中模式的外圈：必须先于控件绘制，否则会盖住按钮本身。 */
+    private void drawModeFrame(GuiGraphicsExtractor context) {
+        if (!this.oauthAvailable) {
+            return;
+        }
+
+        context.fill(this.modeX() - SelectionStyle.INSET_X, TOP - SelectionStyle.INSET_Y,
+                this.modeX() + this.modeWidth() + SelectionStyle.INSET_X, TOP + BTN_H + SelectionStyle.INSET_Y,
+                SelectionStyle.FRAME);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         this.drawHeader(context);
+        this.drawModeFrame(context);
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         this.drawPasswordMask(context, this.passwordBox, this.passwordX, this.passwordY);
-
-        if (this.oauthAvailable) {
-            // 选中态：按钮自身没有 selected 样式，在两枚切换按钮下方画一条强调线。
-            int x = this.contentX();
-            int selectedX = this.oauthMode ? x : x + TOGGLE_W + PAD;
-            int selectedW = this.oauthMode ? TOGGLE_W : INPUT_W - TOGGLE_W - PAD;
-            context.fill(selectedX, TOP + BTN_H, selectedX + selectedW, TOP + BTN_H + 2, 0xFF90A0FF);
-        }
 
         if (this.oauthMode) {
             this.center(context, this.oauthHint(), this.hintY, 0xFFE0E0E0);
@@ -305,12 +319,7 @@ public class ExternalLoginScreen extends LoginScreen {
                     ? Component.translatable("accountsx.account.external.hint.oauth")
                     : Component.translatable("accountsx.account.external.oauth_unavailable");
         }
-        String url = code.browserUrl();
-        Component base = Component.translatable("accountsx.account.external.code", code.userCode());
-        if (url == null) {
-            return base;
-        }
-        String shown = this.font.plainSubstrByWidth(url, INPUT_W * 2);
-        return base.copy().append(Component.literal("  " + shown));
+        // 链接不占版面：用下面的「打开浏览器」「复制登录链接」按钮代替。
+        return Component.translatable("accountsx.account.external.code", code.userCode());
     }
 }
