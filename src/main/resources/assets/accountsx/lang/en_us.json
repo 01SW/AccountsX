@@ -49,5 +49,13 @@
   "accountsx.account.general.server_url": "Auth Server URL",
   "accountsx.account.server.probing": "Probing server...",
   "accountsx.account.server.fail": "Failed to add: %s",
-  "accountsx.account.server.fail.empty": "Enter the auth server address"
+  "accountsx.account.server.fail.empty": "Enter the auth server address",
+  "accountsx.account.external.mode.oauth": "OAuth",
+  "accountsx.account.external.mode.password": "Password",
+  "accountsx.account.external.fetch_code": "Get Login Code",
+  "accountsx.account.external.open_browser": "Open Browser",
+  "accountsx.account.external.code": "Code: %s",
+  "accountsx.account.external.hint.oauth": "Get a code first, then open the browser to finish login",
+  "accountsx.account.external.oauth_unavailable": "This server does not support OAuth, use password login",
+  "accountsx.account.external.error.username": "Enter the user name"
 }

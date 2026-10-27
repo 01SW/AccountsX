@@ -1,5 +1,6 @@
 package top.syshub.accountsx.adapters.mc.ui;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
@@ -47,9 +48,11 @@ public class AccountScreen extends Screen {
     }
 
     public void onClose() {
-        assert this.minecraft != null;
-
-        this.minecraft.setScreen(this.parent);
+        Minecraft minecraft = this.minecraft;
+        if (minecraft == null) {
+            return;
+        }
+        minecraft.setScreen(this.parent);
     }
 
     public void syncAccounts() {
@@ -68,9 +71,9 @@ public class AccountScreen extends Screen {
     private void rebuildFilters() {
         this.filters.clear();
         this.filters.add(new Filter(Component.translatable("accountsx.account.filter.all"),
-                account -> true, null));
+                account -> true, null, null));
         this.filters.add(new Filter(Component.translatable("accountsx.account.filter.microsoft"),
-                account -> account.getAccountType() == AccountType.MICROSOFT, AccountType.MICROSOFT));
+                account -> account.getAccountType() == AccountType.MICROSOFT, AccountType.MICROSOFT, null));
         for (AuthServer server : AccountManager.authServers().servers()) {
             // 统一通行证暂不进入筛选（该类型后续会移除）；只有外置认证服务器有筛选价值。
             if (server.kind() != AuthServerKind.YGGDRASIL) {
@@ -82,10 +85,10 @@ public class AccountScreen extends Screen {
             }
             String displayName = server.displayName();
             Component label = Component.literal(displayName == null || displayName.isBlank() ? apiRoot : displayName);
-            this.filters.add(new Filter(label, account -> isOnServer(account, apiRoot), AccountType.AUTHLIB_INJECTOR));
+            this.filters.add(new Filter(label, account -> isOnServer(account, apiRoot), AccountType.AUTHLIB_INJECTOR, server));
         }
         this.filters.add(new Filter(Component.translatable("accountsx.account.filter.offline"),
-                account -> account.getAccountType() == AccountType.OFFLINE, AccountType.OFFLINE));
+                account -> account.getAccountType() == AccountType.OFFLINE, AccountType.OFFLINE, null));
         if (this.selectedFilter >= this.filters.size()) {
             this.selectedFilter = 0;
         }
@@ -112,11 +115,7 @@ public class AccountScreen extends Screen {
 
         this.addField(new ButtonWidget(x, this.height - PAD - BTN_H, buttonWidth, BTN_H,
                 Component.translatable("accountsx.account.general.add_auth_server"),
-                button -> {
-                    assert this.minecraft != null;
-
-                    this.minecraft.setScreen(new ServerScreen(this));
-                }));
+                button -> this.openAddServer()));
 
         int listLeft = SIDEBAR_W + PAD;
         int listRight = this.width - PAD;
@@ -131,15 +130,9 @@ public class AccountScreen extends Screen {
         this.addWidget(this.accountListWidget);
 
         if (this.selectedFilter != 0) {
-            AccountType addType = this.filters.get(this.selectedFilter).addType();
             this.addField(new ButtonWidget(listLeft, listBottom + BTN_GAP, listRight - listLeft, BTN_H,
                     Component.translatable("accountsx.account.general.add_account"),
-                    button -> {
-                        // addType 在「全部账户」视图下为 null，而该按钮自身也只在非全部视图出现。
-                        assert this.minecraft != null && addType != null;
-
-                        UIScreenImpl.login(this.minecraft, this, addType.getAccountProvider());
-                    }));
+                    button -> this.openAddAccount(this.filters.get(this.selectedFilter))));
         }
     }
 
@@ -183,6 +176,35 @@ public class AccountScreen extends Screen {
         this.addWidget(drawable);
     }
 
-    private record Filter(Component label, Predicate<BaseAccount> predicate, AccountType addType) {
+    /** 打开「添加认证服务器」表单。 */
+    private void openAddServer() {
+        Minecraft minecraft = this.minecraft;
+        if (minecraft == null) {
+            return;
+        }
+        minecraft.setScreen(new ServerScreen(this));
+    }
+
+    /** 「添加账户」：外置服务器走 OAuth/密码登录界面，其余类型仍走通用表单登录。 */
+    private void openAddAccount(Filter filter) {
+        Minecraft minecraft = this.minecraft;
+        if (minecraft == null) {
+            return;
+        }
+        if (filter.server() != null) {
+            minecraft.setScreen(new ExternalLoginScreen(this, filter.server()));
+            return;
+        }
+        AccountType addType = filter.addType();
+        if (addType != null) {
+            UIScreenImpl.login(minecraft, this, addType.getAccountProvider());
+        }
+    }
+
+    /**
+     * 左栏一项筛选：{@code predicate} 决定右栏显示哪些账号，{@code addType} / {@code server} 决定
+     * 「添加账户」走哪条登录路径（统一通行证与「全部账户」两项都没有可加的具体类型）。
+     */
+    private record Filter(Component label, Predicate<BaseAccount> predicate, AccountType addType, AuthServer server) {
     }
 }

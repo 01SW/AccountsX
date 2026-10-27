@@ -49,5 +49,13 @@
   "accountsx.account.general.server_url": "认证服务器地址",
   "accountsx.account.server.probing": "正在探测服务器 ...",
   "accountsx.account.server.fail": "添加失败：%s",
-  "accountsx.account.server.fail.empty": "请填写认证服务器地址"
+  "accountsx.account.server.fail.empty": "请填写认证服务器地址",
+  "accountsx.account.external.mode.oauth": "OAuth",
+  "accountsx.account.external.mode.password": "密码",
+  "accountsx.account.external.fetch_code": "获取登录码",
+  "accountsx.account.external.open_browser": "打开浏览器",
+  "accountsx.account.external.code": "登录码：%s",
+  "accountsx.account.external.hint.oauth": "先获取登录码，再打开浏览器完成登录",
+  "accountsx.account.external.oauth_unavailable": "该服务器未提供 OAuth，请使用密码登录",
+  "accountsx.account.external.error.username": "请填写用户名"
 }
