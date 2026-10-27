@@ -216,6 +216,35 @@ class StandardMigrationsTest {
     }
 
     @Test
+    void hop3to4_seedsServerOauthFromWhicheverAccountHasIt() throws Exception {
+        // 同一服务器上先出现的可能是密码登录的账号（没有信封）：条目建出来时没有 oauth，
+        // 后面的 OAuth 账号必须能把 client_id / token_endpoint 补进去，否则它读回时降级成"需重登"。
+        String passwordFirst = "{\"type\":\"injector.authlib-injector\",\"storage\":{\"accessToken\":\"fake-pw-at\","
+                + "\"playerName\":\"PwUser\",\"playerUUID\":\"dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb\"},"
+                + "\"server\":\"https://littleskin.cn/api/yggdrasil\",\"loginToken\":\"fake-pw-at\",\"accountName\":\"LittleSkin\"}";
+        writeInstanceConfig(ID);
+        writePayload(ID, "[" + passwordFirst + "," + oauthAccountJson() + "]");
+
+        JsonObject out = new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
+
+        assertThat(out.getAsJsonArray("accounts")).hasSize(2);
+        JsonArray servers = out.getAsJsonArray("servers");
+        assertThat(servers).hasSize(1); // 同一 apiRoot 不重复建条目
+        JsonObject server = servers.get(0).getAsJsonObject();
+        assertThat(server.get("apiRoot").getAsString()).isEqualTo("https://littleskin.cn/api/yggdrasil");
+        assertThat(server.get("displayName").getAsString()).isEqualTo("LittleSkin");
+        JsonObject oauth = server.getAsJsonObject("oauth");
+        assertThat(oauth.get("clientId").getAsString()).isEqualTo("1214");
+        assertThat(oauth.get("tokenEndpoint").getAsString()).isEqualTo("https://littleskin.cn/oauth/token");
+
+        // 补种只影响服务器条目，账号自己的凭据不被互相污染
+        assertThat(out.getAsJsonArray("accounts").get(0).getAsJsonObject().getAsJsonObject("credentials")
+                .has("oauth")).isFalse();
+        assertThat(out.getAsJsonArray("accounts").get(1).getAsJsonObject().getAsJsonObject("credentials")
+                .get("oauth").getAsBoolean()).isTrue();
+    }
+
+    @Test
     void hop3to4_brokenOAuthKeepsAccountAndClearsCredentials() throws Exception {
         writeInstanceConfig(ID);
         JsonObject bad = doc("{\"type\":\"injector.authlib-injector\","

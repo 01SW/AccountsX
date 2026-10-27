@@ -37,7 +37,7 @@ import java.util.stream.Stream;
  * <p>顺序刻意安排为"先落盘全局文件，再删载荷、改名实例配置"：载荷删除发生在
  * 全局文件原子写成功之后，崩溃窗口内旧文件仍在，下次启动会重跑一次（覆盖写，结果相同）。</p>
  *
- * <p>迁移过程中还会：反推 servers、拆
+ * <p>迁移过程中还会：反推 servers（{@code oauth} 种子取自带登录信封的账号，与账号顺序无关）、拆
  * {@code "OAuth {\u2026}"} 登录信封为结构化 credentials（解析失败降级为"需重登"，
  * 保留账号条目）、把旧 base64 头像外移到 {@code ~/.cache/accountsx/avatars/}（D4，
  * 失败不阻塞——头像可重建）。</p>
@@ -273,27 +273,39 @@ public final class UnifyAndDecouple implements Migration {
     // ── servers ──────────────────────────────────────────────────
 
     /**
-     * 同一服务器的第二个账号：条目已经建过了，直接复用（同一次转换内的去重，与"合并已有全局文件"无关）。
+     * 同一服务器的多个账号只留一个条目：建过就在已有条目上补缺，不再新建。
      *
-     * <p>已知缺陷（待修）：命中即返回，后一个账号若带 {@code "OAuth {…}"} 信封，它的
-     * {@code client_id}/{@code token_endpoint} 就进不到 server.oauth，读回时该账号降级为"需重登"。
-     * 根因是 servers 条目只能挂一份 oauth，属数据模型设计问题，留待重做 servers 模型时一并修。</p>
+     * <p>OAuth 信封只挂在部分账号上（密码登录的账号没有），所以条目第一次建出来时可能没有
+     * {@code oauth}。后续带信封的账号必须能把它补进去——{@code servers[].oauth} 是整台服务器
+     * 共用的，凭据在账号自己的 {@code credentials} 里；漏了种子，读回时这些账号会降级成
+     * "需重登"。补缺与账号在载荷里的先后顺序无关，两种顺序结果一致。</p>
      */
     private static void addServer(JsonArray servers, Converted converted) {
         for (JsonElement e : servers) {
             if (e instanceof JsonObject so
                     && converted.serverType().equals(str(so.get("type")))
-                    && converted.apiRoot().equals(str(so.get("apiRoot"))))
+                    && converted.apiRoot().equals(str(so.get("apiRoot")))) {
+                fillServer(so, converted);
                 return;
+            }
         }
         JsonObject so = new JsonObject();
         so.addProperty("type", converted.serverType());
         so.addProperty("apiRoot", converted.apiRoot());
-        if (converted.displayName() != null)
-            so.addProperty("displayName", converted.displayName());
-        if (converted.oauthSeed() != null)
-            so.add("oauth", converted.oauthSeed());
+        fillServer(so, converted);
         servers.add(so);
+    }
+
+    /**
+     * 补齐条目里缺的字段，已有的不覆盖：同一 apiRoot 上第二个账号的 {@code accountName} 或
+     * 第二份 OAuth 信封（client_id 不同的情况）都以先到者为准——servers 条目只有一份 oauth，
+     * 这是数据模型当前的边界，不值得为冲突刷告警。
+     */
+    private static void fillServer(JsonObject server, Converted converted) {
+        if (!server.has("displayName") && converted.displayName() != null)
+            server.addProperty("displayName", converted.displayName());
+        if (!server.has("oauth") && converted.oauthSeed() != null)
+            server.add("oauth", converted.oauthSeed());
     }
 
     // ── 落盘与旧文件处理 ──────────────────────────────────────────
