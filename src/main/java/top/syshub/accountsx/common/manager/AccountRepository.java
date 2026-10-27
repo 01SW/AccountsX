@@ -66,7 +66,8 @@ public final class AccountRepository {
      *
      * <p>顺序刻意是"先触发迁移、再 load"：触发器直接跑 3→4 落盘 v4（若旧实例配置存在
      * 且全局尚无账号）；随后 load() 读到已迁移的 v4，不再走链。load() 的"文件缺失则落盘空 v4"
-     * 只发生在无旧配置可迁的真·首启动。重复触发安全（全局已有账号则跳过；3→4 自带追加去重）。</p>
+     * 只发生在无旧配置可迁的真·首启动。重复触发由"全局已有账号则跳过"拦住
+     * （3→4 是覆盖写，重跑结果相同）。</p>
      *
      * @param legacyGameConfigDir 旧实例配置目录（{@code <game>/config/accountsx/}），
      *                            触发迁移用；传 null 表示"不要尝试迁移"（测试/无实例目录场景）
@@ -121,7 +122,12 @@ public final class AccountRepository {
     /**
      * 首启动触发：全局文件是"刚落盘的空配置"（无账号）且旧实例配置存在时，
      * 把旧实例配置当作 v3 文档跑一次 3→4。
-     * 3→4 自带追加去重，所以重复触发安全；全局文件已有账号时直接跳过。
+     * 3→4 是覆盖写（重跑结果相同），所以重复触发安全；全局文件已有账号时直接跳过。
+     *
+     * <p>全局文件<b>读不懂</b>（手工改坏 / 断电 / 同步冲突）时不在这里拦：照常触发，
+     * 由 3→4 覆盖前先整份备份并记 error（见 {@code UnifyAndDecouple.backupIfUnreadable}），
+     * 备份失败才放弃覆盖。至于"用户降级到旧版本模组"（{@code version} 高于当前）：
+     * 不支持回退，按普通文件对待。</p>
      *
      * @return 是否实际跑过迁移（跑过则 load 结果已过期，调用方需重读）
      */
@@ -179,6 +185,8 @@ public final class AccountRepository {
             String text = Files.readString(global, StandardCharsets.UTF_8);
             return parseObject(text);
         } catch (Exception e) {
+            // 读不懂 = 当作"没有可复用的内容"放行迁移；覆盖前 3→4 会先备份这份文件。
+            LOGGER.warn("读取全局配置原文失败，迁移将覆盖该文件（覆盖前会备份）。", e);
             return null;
         }
     }

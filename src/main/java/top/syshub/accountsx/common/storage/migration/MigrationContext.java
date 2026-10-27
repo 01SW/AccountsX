@@ -18,7 +18,7 @@ public interface MigrationContext {
 
     /**
      * 全局配置文件（{@code ~/.config/accountsx.json}，D3 解析结果）。
-     * 3→4 的"追加语义"需要读它已有的内容做去重合并，并原子写回迁移结果；
+     * 3→4 把整份转换结果原子写到这里（覆盖写，不读旧内容）；
      * 链从存储层 load() 触发时它就是被迁移的文件本身。
      */
     Path globalConfigFile();

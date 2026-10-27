@@ -257,26 +257,63 @@ class StandardMigrationsTest {
     }
 
     @Test
-    void hop3to4_appendsToExistingGlobalWithDedup() throws Exception {
+    void hop3to4_overwritesExistingGlobalInsteadOfMerging() throws Exception {
+        // v4 没发布过，全局文件里不可能有"要并入"的内容：整份覆盖，旧账号与未知字段都不保留。
         Files.createDirectories(global.getParent());
         Files.writeString(global, "{\"version\":4,\"extra\":{\"future\":true},\"servers\":[{\"type\":\"mojang\"}],"
-                + "\"accounts\":[{\"type\":\"offline\",\"profile\":{\"name\":\"Steve\",\"uuid\":\"069a79f444e94726a5befca90e38aaf5\"}}]}",
+                + "\"accounts\":[{\"type\":\"offline\",\"profile\":{\"name\":\"Stale\",\"uuid\":\"069a79f444e94726a5befca90e38aaf5\"}}]}",
                 StandardCharsets.UTF_8);
+        Files.createDirectories(instanceDir);
+        Files.writeString(instanceDir.resolve("accounts.json.migrated"), "{\"version\":3}", StandardCharsets.UTF_8);
         writeInstanceConfig(ID);
         writePayload(ID, "["
-                + "{\"type\":\"offline\",\"storage\":{\"playerName\":\"Steve\",\"playerUUID\":\"069a79f4-44e9-4726-a5befca90e38aaf5\"}},"
                 + "{\"type\":\"offline\",\"storage\":{\"playerName\":\"Bob\",\"playerUUID\":\"069a79f4-44e9-4726-a5befca90e38aaf6\"}},"
                 + "{\"type\":\"injector.authlib-injector\",\"storage\":{\"accessToken\":\"fake-t\",\"playerName\":\"Alex\",\"playerUUID\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"},"
                 + "\"server\":\"https://example.invalid/api/yggdrasil\",\"loginToken\":\"fake-t\"}]");
 
         JsonObject out = new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
 
-        // 重复的 Steve 被跳过，Bob 与 ygg Alex 追加；全局已有未知字段保留
-        assertThat(out.getAsJsonArray("accounts")).hasSize(3);
-        assertThat(out.getAsJsonObject("extra").get("future").getAsBoolean()).isTrue();
-        // servers：mojang 原有、ygg server 新增（offline 不再补齐）
-        assertThat(out.getAsJsonArray("servers")).hasSize(2);
+        assertThat(out.getAsJsonArray("accounts")).hasSize(2);
+        assertThat(out.toString()).doesNotContain("Stale").doesNotContain("extra");
+        assertThat(out.getAsJsonArray("servers")).hasSize(1);
         assertThat(findServer(out, "https://example.invalid/api/yggdrasil").get("type").getAsString()).isEqualTo("yggdrasil");
+        // 旧的 .migrated 被直接覆盖，不产生 .migrated-2
+        assertThat(Files.readString(instanceDir.resolve("accounts.json.migrated"), StandardCharsets.UTF_8))
+                .contains("\"id\"");
+        assertThat(Files.exists(instanceDir.resolve("accounts.json.migrated-2"))).isFalse();
+        // 覆盖真的落盘（不是只在内存里）
+        JsonObject onDisk = JsonParser.parseString(Files.readString(global, StandardCharsets.UTF_8)).getAsJsonObject();
+        assertThat(onDisk.get("version").getAsInt()).isEqualTo(4);
+        assertThat(onDisk.getAsJsonArray("accounts")).hasSize(2);
+        assertThat(onDisk.toString()).doesNotContain("Stale");
+        // 读得懂的文件直接覆盖，不留备份
+        try (var files = Files.list(global.getParent())) {
+            assertThat(files.map(p -> p.getFileName().toString()))
+                    .noneMatch(n -> n.startsWith("accountsx.json.bak-"));
+        }
+    }
+
+    @Test
+    void hop3to4_backsUpUnreadableGlobalBeforeOverwrite() throws Exception {
+        // 坏掉的全局文件不能静默消失：先整份备份 + 记 error，再写入迁移结果。
+        Files.createDirectories(global.getParent());
+        byte[] broken = "{ this is not json ]".getBytes(StandardCharsets.UTF_8);
+        Files.write(global, broken);
+        writeInstanceConfig(ID);
+        writePayload(ID, "[{\"type\":\"offline\",\"storage\":{\"playerName\":\"Steve\","
+                + "\"playerUUID\":\"069a79f4-44e9-4726-a5befca90e38aaf5\"}}]");
+
+        new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
+
+        try (var files = Files.list(global.getParent())) {
+            Path bak = files.filter(p -> p.getFileName().toString().startsWith("accountsx.json.bak-"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("坏文件没有被备份"));
+            assertThat(Files.readAllBytes(bak)).isEqualTo(broken);
+        }
+        JsonObject onDisk = JsonParser.parseString(Files.readString(global, StandardCharsets.UTF_8)).getAsJsonObject();
+        assertThat(onDisk.get("version").getAsInt()).isEqualTo(4);
+        assertThat(onDisk.getAsJsonArray("accounts")).hasSize(1);
     }
 
     @Test
@@ -307,7 +344,7 @@ class StandardMigrationsTest {
     }
 
     @Test
-    void hop3to4_payloadMissingMergesNothingButStillCleansUp() throws Exception {
+    void hop3to4_payloadMissingWritesEmptyGlobalAndCleansUp() throws Exception {
         writeInstanceConfig(ID); // 载荷不存在：实例从未添加过账号
 
         JsonObject out = new UnifyAndDecouple(GSON).apply(legacyV3Doc(), ctx);
@@ -330,7 +367,7 @@ class StandardMigrationsTest {
         JsonObject out = StandardMigrations.chain(GSON).upgrade(v0, 0, ctx);
 
         assertThat(out.get("version").getAsInt()).isEqualTo(ConfigStore.CURRENT_VERSION);
-        // INJECTOR 在 0→1 删除、BOGUS 在 1→2 跳过；2→3 搬载荷、3→4 并入全局并清理
+        // INJECTOR 在 0→1 删除、BOGUS 在 1→2 跳过；2→3 搬载荷、3→4 覆盖写全局并清理
         assertThat(out.getAsJsonArray("accounts")).hasSize(2);
         assertThat(out.getAsJsonArray("servers")).hasSize(0);
         assertThat(Files.exists(global)).isTrue();

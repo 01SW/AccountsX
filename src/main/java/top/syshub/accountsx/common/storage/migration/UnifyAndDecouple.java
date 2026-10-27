@@ -18,26 +18,26 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Stream;
 
 /**
  * 3→4 {@code UNIFY_AND_DECOUPLE}（方案 C，见 REFACTORING/08-config-schema.md）：
  * 从"实例配置 {@code id} 索引 + {@code ~/.accountsx/<id>.json} 载荷"收敛为全局单文件。
  *
- * <p>方案 C 要点：唯一数据来源是<b>当前实例</b> {@code id} 指向的载荷；
+ * <p>一步完成：唯一数据来源是<b>当前实例</b> {@code id} 指向的载荷，整份转成 v4 后
+ * 覆盖写全局文件——不并入已有内容、不去重、不搬未知字段。v4 从未发布，磁盘上不存在
+ * "别的实例先迁好的 v4 文件"，所以没有"合并"这回事。
  * {@code ~/.accountsx/} 下其余 {@code *.json} 是其他实例的账号集，一律不动
- * （未更新模组的实例还要用）。写入是<b>追加语义</b>：全局文件已存在时逐条并入、
- * 按 {@code (type, playerUuid, server)} 去重，已存在的跳过并记 warn。</p>
+ * （未更新模组的实例还要用）。</p>
  *
  * <p>顺序刻意安排为"先落盘全局文件，再删载荷、改名实例配置"：载荷删除发生在
- * 全局文件原子写成功之后，崩溃窗口内数据最多重复（重跑由去重兜底），不会丢。
- * 幂等性：载荷已删 / 实例配置已改名时再跑一次只会并 0 条。</p>
+ * 全局文件原子写成功之后，崩溃窗口内旧文件仍在，下次启动会重跑一次（覆盖写，结果相同）。</p>
  *
- * <p>迁移过程中还会：反推 servers（含固定 mojang / offline 两条）、拆
+ * <p>迁移过程中还会：反推 servers、拆
  * {@code "OAuth {\u2026}"} 登录信封为结构化 credentials（解析失败降级为"需重登"，
  * 保留账号条目）、把旧 base64 头像外移到 {@code ~/.cache/accountsx/avatars/}（D4，
  * 失败不阻塞——头像可重建）。</p>
@@ -46,6 +46,7 @@ public final class UnifyAndDecouple implements Migration {
     private static final Logger LOGGER = LoggerFactory.getLogger(UnifyAndDecouple.class);
     private static final String OAUTH_PREFIX = "OAuth ";
     private static final String HEX = "0123456789abcdef";
+    private static final DateTimeFormatter BACKUP_TS = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final Gson gson;
 
@@ -76,30 +77,11 @@ public final class UnifyAndDecouple implements Migration {
         String id = requireId(config);
         JsonArray legacy = readPayload(ctx, id);
 
-        // 追加语义：全局文件已是 v4（其他实例先迁过）则以它为底；
-        // v<4（load() 触发时它就是被迁移文档本身）或不存在则新起文档，只继承输入文档的未知字段。
-        JsonObject existing = readExistingGlobal(ctx);
-        JsonObject out;
-        JsonArray outAccounts;
-        JsonArray outServers;
-        if (existing != null) {
-            out = existing;
-            outAccounts = existing.get("accounts") instanceof JsonArray a ? a : new JsonArray();
-            outServers = existing.get("servers") instanceof JsonArray a ? a : new JsonArray();
-        } else {
-            out = new JsonObject();
-            copyUnknownFields(config, out);
-            outAccounts = new JsonArray();
-            outServers = new JsonArray();
-        }
-
-        Set<String> seen = new HashSet<>();
-        for (JsonElement e : outAccounts)
-            if (e instanceof JsonObject jo)
-                seen.add(dedupKey(jo));
-
-        int added = 0;
-        int skipped = 0;
+        // 一步完成：把本实例的整份旧账号直接转成 v4，整体覆盖全局文件。
+        // 不读取全局文件已有内容——v4 没发布过，不存在"别人已经迁好"的文档需要合并。
+        JsonObject out = new JsonObject();
+        JsonArray outAccounts = new JsonArray();
+        JsonArray outServers = new JsonArray();
         for (JsonElement element : legacy) {
             if (!(element instanceof JsonObject account)) {
                 LOGGER.warn("旧载荷含非对象条目，已忽略。");
@@ -109,21 +91,12 @@ public final class UnifyAndDecouple implements Migration {
             if (converted == null)
                 continue;
             if (converted.serverType() != null)
-                ensureServer(outServers, converted);
-            String key = dedupKey(converted.account());
-            if (!seen.add(key)) {
-                skipped++;
-                LOGGER.warn("账号已存在（type={}, server={}），跳过并入。",
-                        str(converted.account().get("type")), str(converted.account().get("server")));
-                continue;
-            }
+                addServer(outServers, converted);
             outAccounts.add(converted.account());
-            added++;
         }
-        LOGGER.info("并入 {} 个账号，其中 {} 个已存在被跳过。", added, skipped);
+        LOGGER.info("已将 {} 个旧账号转换为 v4。", outAccounts.size());
 
         // mojang / offline 是 builtin kind，不写入 servers 列表。
-
         out.add("accounts", outAccounts);
         out.add("servers", outServers);
         out.addProperty("version", toVersion());
@@ -146,7 +119,7 @@ public final class UnifyAndDecouple implements Migration {
     private JsonArray readPayload(MigrationContext ctx, String id) throws IOException {
         Path payload = ctx.legacyHomeDir().resolve(id + ".json");
         if (!Files.isRegularFile(payload)) {
-            LOGGER.info("旧载荷文件不存在（实例从未添加过账号，或已迁移过）：{}", payload);
+            LOGGER.info("旧载荷文件不存在（实例从未添加过账号）：{}", payload);
             return new JsonArray();
         }
         try (Reader reader = Files.newBufferedReader(payload, StandardCharsets.UTF_8)) {
@@ -159,34 +132,8 @@ public final class UnifyAndDecouple implements Migration {
                 throw new IllegalStateException("旧载荷不是 JSON 数组，拒绝迁移以保护数据: " + payload);
             return accounts;
         } catch (JsonParseException e) {
-            // 载荷读不懂就抛：宁可让存储层备份降级，也不删掉一个没成功并入全局的载荷文件。
+            // 载荷读不懂就抛：宁可让存储层备份降级，也不删掉一个还没写进全局文件的载荷。
             throw new IllegalStateException("旧载荷解析失败: " + payload, e);
-        }
-    }
-
-    private JsonObject readExistingGlobal(MigrationContext ctx) throws IOException {
-        Path file = ctx.globalConfigFile();
-        if (!Files.isRegularFile(file))
-            return null;
-        JsonElement parsed;
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            parsed = JsonParser.parseReader(reader);
-        } catch (JsonParseException e) {
-            throw new IllegalStateException("全局配置文件已存在但解析失败，拒绝覆写: " + file, e);
-        }
-        if (!(parsed instanceof JsonObject root))
-            throw new IllegalStateException("全局配置文件不是 JSON object，拒绝覆写: " + file);
-        int version = root.get("version") instanceof JsonPrimitive p && p.isNumber() ? p.getAsInt() : -1;
-        if (version > toVersion())
-            throw new IllegalStateException("全局配置版本 " + version + " 高于迁移目标，拒绝覆写。");
-        return version == toVersion() ? root : null;
-    }
-
-    private static void copyUnknownFields(JsonObject from, JsonObject to) {
-        for (String key : from.keySet()) {
-            if (key.equals("version") || key.equals("id") || key.equals("accounts"))
-                continue;
-            to.add(key, from.get(key));
         }
     }
 
@@ -325,17 +272,19 @@ public final class UnifyAndDecouple implements Migration {
 
     // ── servers ──────────────────────────────────────────────────
 
-    private static void ensureServer(JsonArray servers, Converted converted) {
+    /**
+     * 同一服务器的第二个账号：条目已经建过了，直接复用（同一次转换内的去重，与"合并已有全局文件"无关）。
+     *
+     * <p>已知缺陷（待修）：命中即返回，后一个账号若带 {@code "OAuth {…}"} 信封，它的
+     * {@code client_id}/{@code token_endpoint} 就进不到 server.oauth，读回时该账号降级为"需重登"。
+     * 根因是 servers 条目只能挂一份 oauth，属数据模型设计问题，留待重做 servers 模型时一并修。</p>
+     */
+    private static void addServer(JsonArray servers, Converted converted) {
         for (JsonElement e : servers) {
             if (e instanceof JsonObject so
                     && converted.serverType().equals(str(so.get("type")))
-                    && converted.apiRoot().equals(str(so.get("apiRoot")))) {
-                if (converted.displayName() != null && str(so.get("displayName")) == null)
-                    so.addProperty("displayName", converted.displayName());
-                if (converted.oauthSeed() != null && so.get("oauth") == null)
-                    so.add("oauth", converted.oauthSeed());
+                    && converted.apiRoot().equals(str(so.get("apiRoot"))))
                 return;
-            }
         }
         JsonObject so = new JsonObject();
         so.addProperty("type", converted.serverType());
@@ -347,16 +296,6 @@ public final class UnifyAndDecouple implements Migration {
         servers.add(so);
     }
 
-    private static void ensureServerKind(JsonArray servers, String type) {
-        for (JsonElement e : servers) {
-            if (e instanceof JsonObject so && type.equals(str(so.get("type"))))
-                return;
-        }
-        JsonObject so = new JsonObject();
-        so.addProperty("type", type);
-        servers.add(so);
-    }
-
     // ── 落盘与旧文件处理 ──────────────────────────────────────────
 
     /**
@@ -365,6 +304,7 @@ public final class UnifyAndDecouple implements Migration {
      */
     private void writeGlobal(JsonObject out, MigrationContext ctx) throws IOException {
         Path target = ctx.globalConfigFile();
+        backupIfUnreadable(target);
         Path dir = target.getParent();
         if (dir != null)
             Files.createDirectories(dir);
@@ -377,6 +317,40 @@ public final class UnifyAndDecouple implements Migration {
         }
     }
 
+    /**
+     * 旧全局文件读不懂（手工改坏 / 写一半断电 / 同步冲突）时先整份备份再覆盖。
+     *
+     * <p>迁移是唯一的"盲写方"：{@code JsonConfigStore.load()} 的备份 + 只读降级要等触发器跑完
+     * 才轮到，那时文件已被换成合法 v4，拦不住。备份失败则放弃覆盖——宁可这次启动报错，
+     * 也不要把用户还能手工抢救的数据抹掉。</p>
+     */
+    private static void backupIfUnreadable(Path target) throws IOException {
+        if (!Files.isRegularFile(target))
+            return;
+        String reason = null;
+        try (Reader reader = Files.newBufferedReader(target, StandardCharsets.UTF_8)) {
+            JsonElement parsed = JsonParser.parseReader(reader);
+            if (parsed instanceof JsonObject)
+                return;
+            reason = "内容不是 JSON object";
+        } catch (RuntimeException e) {
+            reason = e.toString();
+        }
+
+        Path bak = target.resolveSibling(target.getFileName() + ".bak-" + LocalDateTime.now().format(BACKUP_TS));
+        int suffix = 1;
+        while (Files.exists(bak)) {
+            bak = target.resolveSibling(target.getFileName() + ".bak-"
+                    + LocalDateTime.now().format(BACKUP_TS) + "-" + suffix++);
+        }
+        try {
+            Files.copy(target, bak);
+        } catch (IOException e) {
+            throw new IOException("旧全局配置无法解析且备份失败，拒绝覆盖：" + target, e);
+        }
+        LOGGER.error("旧全局配置无法解析（{}），已备份到 {}，随后写入迁移结果。", reason, bak);
+    }
+
     /** 删除本实例载荷（全局文件已持久化才会走到这里）；目录空了就删；实例配置改名 .migrated。 */
     private static void cleanupLegacy(MigrationContext ctx, String id) {
         Path home = ctx.legacyHomeDir();
@@ -384,7 +358,7 @@ public final class UnifyAndDecouple implements Migration {
         try {
             Files.deleteIfExists(payload);
         } catch (IOException e) {
-            LOGGER.warn("删除已迁移载荷失败：{}（下次启动会因去重跳过，不影响数据）。", payload, e);
+            LOGGER.warn("删除已迁移载荷失败：{}（下次启动会重跑一次 3→4，覆盖写结果相同，不影响数据）。", payload, e);
         }
         try {
             if (Files.isDirectory(home)) {
@@ -402,17 +376,12 @@ public final class UnifyAndDecouple implements Migration {
         Path instanceConfig = ctx.legacyGameConfigDir().resolve("accounts.json");
         if (!Files.isRegularFile(instanceConfig))
             return;
-        Path migrated = instanceConfig.resolveSibling("accounts.json.migrated");
-        int suffix = 1;
         try {
-            while (Files.exists(migrated)) {
-                suffix++;
-                migrated = instanceConfig.resolveSibling("accounts.json.migrated-" + suffix);
-            }
-            Files.move(instanceConfig, migrated);
-            LOGGER.info("实例配置已改名保留：{} → {}", instanceConfig.getFileName(), migrated.getFileName());
+            Files.move(instanceConfig, instanceConfig.resolveSibling("accounts.json.migrated"),
+                    StandardCopyOption.REPLACE_EXISTING);
+            LOGGER.info("实例配置已改名保留：accounts.json → accounts.json.migrated");
         } catch (IOException e) {
-            // 全局文件此时已落盘，改名失败不回滚；下次启动重跑 3→4 由去重兜底。
+            // 全局文件此时已落盘，改名失败不回滚；下次启动会重跑一次（覆盖写，结果相同）。
             LOGGER.warn("实例配置改名 .migrated 失败（数据已在全局文件，不影响）。", e);
         }
     }
@@ -432,15 +401,5 @@ public final class UnifyAndDecouple implements Migration {
         if (hex.length() == 32 && hex.chars().allMatch(c -> HEX.indexOf(c) >= 0))
             return hex;
         return raw.trim();
-    }
-
-    /** 去重键 (type, playerUuid, server)，server 对 microsoft / offline 取空串。 */
-    private static String dedupKey(JsonObject v4Account) {
-        String uuid = "";
-        if (v4Account.get("profile") instanceof JsonObject p && str(p.get("uuid")) != null)
-            uuid = str(p.get("uuid"));
-        String server = str(v4Account.get("server"));
-        String type = str(v4Account.get("type"));
-        return (type == null ? "" : type) + '\u0000' + uuid + '\u0000' + (server == null ? "" : server);
     }
 }
