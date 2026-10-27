@@ -51,45 +51,7 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
             );
             YggdrasilAuthenticationService service = ofYggdrasilAuthenticationService(proxy, env, context.security());
 
-            MinecraftSessionService sessionService = new YggdrasilMinecraftSessionService(service, env) {
-                private static final Logger LOGGER = LoggerFactory.getLogger(AuthlibAdapterImpl.class);
-
-                private final Gson gson = new GsonBuilder().registerTypeAdapter(UUID.class, new UUIDTypeAdapter()).create();
-
-                @Override
-                public Map<MinecraftProfileTexture.Type, MinecraftProfileTexture> getTextures(GameProfile profile, boolean requireSecure) throws InsecurePublicKeyException {
-                    final Property textureProperty = Iterables.getFirst(profile.getProperties().get("textures"), null);
-
-                    if (textureProperty == null) {
-                        return new HashMap<>();
-                    }
-
-                    final String value = requireSecure ? getSecurePropertyValue(textureProperty) : textureProperty.getValue();
-
-                    final MinecraftTexturesPayload result;
-                    try {
-                        final String json = new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
-                        result = this.gson.fromJson(json, MinecraftTexturesPayload.class);
-                    } catch (final JsonParseException e) {
-                        LOGGER.error("Could not decode textures payload", e);
-                        return new HashMap<>();
-                    }
-
-                    if (result == null || result.getTextures() == null) {
-                        return new HashMap<>();
-                    }
-
-                    for (MinecraftProfileTexture entry : result.getTextures().values()) {
-                        String url = entry.getUrl();
-                        if (context.security().shouldBlockSkinUrl(url)) {
-                            LOGGER.error("Textures payload contains blocked domain: {}", url);
-                            return new HashMap<>();
-                        }
-                    }
-
-                    return result.getTextures();
-                }
-            };
+            MinecraftSessionService sessionService = new PolicySessionService(service, env, context.security());
 
             return new AccountSessionImpl(storage, service, sessionService, switch (context.policy()) {
                 case ONLINE -> {
@@ -196,4 +158,57 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
             return false;
         }
     }
+
+    /**
+     * 覆写 {@code getTextures}：验签后先按服务器的 skinDomains 判定贴图域名（P4 / P5.4）。
+     *
+     * <p>具名类而不是匿名类：白名单行为契约测试需要能直接构造它。</p>
+     */
+    static final class PolicySessionService extends YggdrasilMinecraftSessionService {
+        private static final Logger LOGGER = LoggerFactory.getLogger(PolicySessionService.class);
+
+        private final Gson gson = new GsonBuilder().registerTypeAdapter(UUID.class, new UUIDTypeAdapter()).create();
+
+        private final AuthSecurityContext security;
+
+        PolicySessionService(YggdrasilAuthenticationService service, Environment env, AuthSecurityContext security) {
+            super(service, env);
+            this.security = security;
+        }
+
+        @Override
+        public Map<MinecraftProfileTexture.Type, MinecraftProfileTexture> getTextures(GameProfile profile, boolean requireSecure) throws InsecurePublicKeyException {
+            final Property textureProperty = Iterables.getFirst(profile.getProperties().get("textures"), null);
+
+            if (textureProperty == null) {
+                return new HashMap<>();
+            }
+
+            final String value = requireSecure ? getSecurePropertyValue(textureProperty) : textureProperty.getValue();
+
+            final MinecraftTexturesPayload result;
+            try {
+                final String json = new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+                result = this.gson.fromJson(json, MinecraftTexturesPayload.class);
+            } catch (final JsonParseException e) {
+                LOGGER.error("Could not decode textures payload", e);
+                return new HashMap<>();
+            }
+
+            if (result == null || result.getTextures() == null) {
+                return new HashMap<>();
+            }
+
+            for (MinecraftProfileTexture entry : result.getTextures().values()) {
+                String url = entry.getUrl();
+                if (security.shouldBlockSkinUrl(url)) {
+                    LOGGER.error("Textures payload contains blocked domain: {}", url);
+                    return new HashMap<>();
+                }
+            }
+
+            return result.getTextures();
+        }
+    }
+
 }

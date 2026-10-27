@@ -33,6 +33,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 
 public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImpl> {
 
@@ -128,31 +129,37 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
     static final class PolicySessionService extends YggdrasilMinecraftSessionService {
         private static final Logger LOGGER = LoggerFactory.getLogger(PolicySessionService.class);
 
-        private static final MethodHandle GET_PROPERTY_SIGNATURE_STATE = UnsafeVM.prepareMH(
-                "YggdrasilMinecraftSessionService::getPropertySignatureState", lookup -> lookup.findVirtual(
-                        YggdrasilMinecraftSessionService.class,
-                        "getPropertySignatureState",
-                        MethodType.methodType(SignatureState.class, Property.class)
-                )
-        );
-
         private final AuthSecurityContext security;
+        private final Function<Property, SignatureState> signatureStateResolver;
         private final Gson gson = new GsonBuilder().registerTypeAdapter(UUID.class, new UUIDTypeAdapter()).create();
 
         PolicySessionService(ServicesKeySet keySet, Proxy proxy, Environment env, AuthSecurityContext security) {
+            this(keySet, proxy, env, security, null);
+        }
+
+        /**
+         * 测试注入点：单测没有 Fabric 运行时，UnsafeVM 取不到 IMPL_LOOKUP，
+         * 无法构造指向 authlib 私有方法的 MethodHandle。
+         */
+        PolicySessionService(ServicesKeySet keySet, Proxy proxy, Environment env, AuthSecurityContext security,
+                             Function<Property, SignatureState> signatureStateResolver) {
             super(keySet, proxy, env);
             this.security = security;
+            this.signatureStateResolver = signatureStateResolver == null ? this::authlibSignatureState : signatureStateResolver;
+        }
+
+        private SignatureState authlibSignatureState(Property property) {
+            try {
+                return (SignatureState) SignatureStateAccessor.GET_PROPERTY_SIGNATURE_STATE.invoke(this, property);
+            } catch (Throwable t) {
+                throw UnsafeVM.fail("YggdrasilMinecraftSessionService::getPropertySignatureState", t);
+            }
         }
 
         @Override
         public MinecraftProfileTextures unpackTextures(Property packedTextures) {
             String value = packedTextures.value();
-            SignatureState signatureState;
-            try {
-                signatureState = (SignatureState) GET_PROPERTY_SIGNATURE_STATE.invoke(this, packedTextures);
-            } catch (Throwable t) {
-                throw UnsafeVM.fail("YggdrasilMinecraftSessionService::getPropertySignatureState", t);
-            }
+            SignatureState signatureState = this.signatureStateResolver.apply(packedTextures);
 
             MinecraftTexturesPayload result;
             try {
@@ -182,6 +189,17 @@ public final class AuthlibAdapterImpl implements AuthlibBridge<AccountSessionImp
                     textures.get(MinecraftProfileTexture.Type.CAPE),
                     textures.get(MinecraftProfileTexture.Type.ELYTRA),
                     signatureState
+            );
+
+        }
+        /** 延迟到真正用到时才解析 authlib 私有方法，避免单测在类初始化阶段依赖 UnsafeVM。 */
+        private static final class SignatureStateAccessor {
+            private static final MethodHandle GET_PROPERTY_SIGNATURE_STATE = UnsafeVM.prepareMH(
+                    "YggdrasilMinecraftSessionService::getPropertySignatureState", lookup -> lookup.findVirtual(
+                            YggdrasilMinecraftSessionService.class,
+                            "getPropertySignatureState",
+                            MethodType.methodType(SignatureState.class, Property.class)
+                    )
             );
         }
     }
