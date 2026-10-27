@@ -57,5 +57,10 @@
   "accountsx.account.external.code": "登录码：%s",
   "accountsx.account.external.hint.oauth": "先获取登录码，再打开浏览器完成登录",
   "accountsx.account.external.oauth_unavailable": "该服务器未提供 OAuth，请使用密码登录",
-  "accountsx.account.external.error.username": "请填写用户名"
+  "accountsx.account.external.error.username": "请填写用户名",
+  "accountsx.account.external.error.player_name": "请填写玩家名",
+  "accountsx.account.external.copy_link": "复制登录链接",
+  "accountsx.account.general.current_account": "当前账户：%s",
+  "accountsx.account.general.current_account.none": "当前账户：无",
+  "accountsx.account.general.remove_auth_server": "移除认证服务器"
 }

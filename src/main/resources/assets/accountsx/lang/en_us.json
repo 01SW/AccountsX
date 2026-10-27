@@ -57,5 +57,10 @@
   "accountsx.account.external.code": "Code: %s",
   "accountsx.account.external.hint.oauth": "Get a code first, then open the browser to finish login",
   "accountsx.account.external.oauth_unavailable": "This server does not support OAuth, use password login",
-  "accountsx.account.external.error.username": "Enter the user name"
+  "accountsx.account.external.error.username": "Enter the user name",
+  "accountsx.account.external.error.player_name": "Enter the player name",
+  "accountsx.account.external.copy_link": "Copy Login Link",
+  "accountsx.account.general.current_account": "Current account: %s",
+  "accountsx.account.general.current_account.none": "Current account: none",
+  "accountsx.account.general.remove_auth_server": "Remove Auth Server"
 }

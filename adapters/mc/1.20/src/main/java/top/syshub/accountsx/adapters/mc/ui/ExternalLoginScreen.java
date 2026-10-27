@@ -2,7 +2,6 @@ package top.syshub.accountsx.adapters.mc.ui;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -14,36 +13,25 @@ import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
-import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
 
 /**
  * 外置认证登录界面（OAuth / 密码两种方式）。
  *
  * <p>服务器由左栏筛选确定，这里不再输入地址、也不发探测请求：端点全部取自注册表缓存。OAuth 分两步
- * ——先取设备码展示给用户，再打开浏览器并轮询 token。关闭窗口即取消：置 {@code closed} 后轮询与
+ * ——先取设备码展示并复制，再打开浏览器并轮询 token。关闭窗口即取消：置 {@code closed} 后轮询与
  * 回调都会尽快放弃，迟到的结果不会写进账号列表。</p>
  */
-public class ExternalLoginScreen extends Screen {
-    private static final int PAD = 8;
-    private static final int BTN_H = 20;
-    private static final int INPUT_W = 240;
+public class ExternalLoginScreen extends LoginScreen {
     private static final int TOGGLE_W = (INPUT_W - PAD) / 2;
-    private static final int TOP = 96;
 
-    private final Screen parent;
     private final AuthServer server;
     private final AbstractInjectorAccountProvider<?> provider;
     private final boolean oauthAvailable;
 
-    /** 轮询线程会读这两个字段，写入全在客户端线程，故声明 volatile。 */
-    private volatile boolean closed;
-    private volatile long requestId;
-
     private boolean oauthMode;
-    private boolean busy;
     private DeviceCode deviceCode;
-    private Component status;
+    private int hintY;
 
     private EditBox usernameBox;
     private EditBox passwordBox;
@@ -51,8 +39,7 @@ public class ExternalLoginScreen extends Screen {
     private int passwordY;
 
     public ExternalLoginScreen(Screen parent, AuthServer server) {
-        super(Component.translatable("accountsx.account.general.login"));
-        this.parent = parent;
+        super(parent, "accountsx.account.general.login", label(server));
         this.server = server;
         AccountType type = server.kind() == AuthServerKind.UNITED
                 ? AccountType.UNITED_INJECTOR
@@ -62,29 +49,18 @@ public class ExternalLoginScreen extends Screen {
         this.oauthMode = this.oauthAvailable;
     }
 
-    @Override
-    public void onClose() {
-        // 关闭即取消：轮询线程与在途回调都以此为准。
-        this.closed = true;
-        Minecraft minecraft = this.minecraft;
-        if (minecraft == null) {
-            return;
-        }
-        minecraft.setScreen(this.parent);
+    private static Component label(AuthServer server) {
+        String name = server.displayName();
+        return Component.literal(name == null || name.isBlank() ? server.apiRoot() : name);
     }
 
     @Override
-    protected void init() {
-        super.init();
-        this.updateWidgets();
-    }
-
-    private void updateWidgets() {
+    protected void updateWidgets() {
         this.usernameBox = null;
         this.passwordBox = null;
         this.clearWidgets();
 
-        int x = this.width / 2 - INPUT_W / 2;
+        int x = this.contentX();
         int y = TOP;
 
         if (this.oauthAvailable) {
@@ -98,12 +74,27 @@ public class ExternalLoginScreen extends Screen {
         }
 
         if (this.oauthMode) {
-            Component label = Component.translatable(this.deviceCode == null
-                    ? "accountsx.account.external.fetch_code"
-                    : "accountsx.account.external.open_browser");
-            ButtonWidget action = new ButtonWidget(x, y, INPUT_W, BTN_H, label, button -> this.startOAuth());
-            action.active = !this.busy;
-            this.addField(action);
+            DeviceCode code = this.deviceCode;
+            if (code == null) {
+                ButtonWidget fetch = new ButtonWidget(x, y, INPUT_W, BTN_H,
+                        Component.translatable("accountsx.account.external.fetch_code"),
+                        button -> this.fetchCode());
+                fetch.active = !this.busy;
+                this.addField(fetch);
+            } else {
+                // 拿到码之后给两个动作：直接去浏览器，或只把链接交给用户自己打开。
+                ButtonWidget open = new ButtonWidget(x, y, TOGGLE_W, BTN_H,
+                        Component.translatable("accountsx.account.external.open_browser"),
+                        button -> this.loginOAuth(code));
+                open.active = !this.busy;
+                this.addField(open);
+                ButtonWidget copy = new ButtonWidget(x + TOGGLE_W + PAD, y, INPUT_W - TOGGLE_W - PAD, BTN_H,
+                        Component.translatable("accountsx.account.external.copy_link"),
+                        button -> this.copyLink(code));
+                copy.active = !this.busy;
+                this.addField(copy);
+            }
+            y += BTN_H + PAD;
         } else {
             this.usernameBox = new EditBox(this.font, x, y, INPUT_W, BTN_H,
                     Component.translatable("accountsx.account.objects.user_name"));
@@ -126,12 +117,11 @@ public class ExternalLoginScreen extends Screen {
                     button -> this.loginPassword());
             login.active = !this.busy;
             this.addField(login);
+            y += BTN_H + PAD;
         }
 
-        // 关闭按钮始终可点：忙碌时它就是「取消」入口（onClose 会终止轮询）。
-        this.addField(new ButtonWidget(x, this.height - PAD - BTN_H, INPUT_W, BTN_H,
-                Component.translatable("accountsx.general.action.close"),
-                button -> this.onClose()));
+        this.hintY = y;
+        this.addBackButton();
     }
 
     private void selectMode(boolean oauth) {
@@ -142,20 +132,6 @@ public class ExternalLoginScreen extends Screen {
         this.deviceCode = null;
         this.status = null;
         this.updateWidgets();
-    }
-
-    /** 界面状态是否仍代表当前这次操作：关窗或又发起了新操作都会让它失真。 */
-    private boolean valid(long rid) {
-        return !this.closed && rid == this.requestId;
-    }
-
-    private void startOAuth() {
-        DeviceCode code = this.deviceCode;
-        if (code == null) {
-            this.fetchCode();
-            return;
-        }
-        this.loginOAuth(code);
     }
 
     private void fetchCode() {
@@ -294,65 +270,31 @@ public class ExternalLoginScreen extends Screen {
         });
     }
 
-    /** 登录成功：入库、让父界面的列表跟上，然后回到父界面。 */
-    private void finish(BaseAccount account) {
-        AccountManager.addAccount(account);
-        Screen parentScreen = this.parent;
-        if (parentScreen instanceof AccountScreen accountScreen) {
-            accountScreen.syncAccounts();
-        }
-        this.onClose();
-    }
-
-    private static Component failText(Exception e) {
-        String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-        return Component.translatable("accountsx.account.server.fail", detail);
-    }
-
-    private void addField(AbstractWidget drawable) {
-        this.addRenderableOnly(drawable);
-        this.addWidget(drawable);
-    }
-
-    /**
-     * 密码框遮蔽。
-     *
-     * <p>各版本 EditBox 的格式化 API 不同（26.x 只有 {@code addFormatter}，1.20 家族没有统一入口），
-     * 而这份代码要同时编译 12 个版本，所以不碰格式化 API：控件里存真值，画完控件后把输入框内部盖掉，
-     * 再按长度画星号。只用 fill + 文本绘制，两族都有。</p>
-     */
-    private void drawPasswordMask(GuiGraphics context) {
-        EditBox box = this.passwordBox;
-        if (box == null || box.getValue().isEmpty()) {
-            return;
-        }
-        context.fill(this.passwordX + 1, this.passwordY + 1,
-                this.passwordX + INPUT_W - 1, this.passwordY + BTN_H - 1, 0xFF000000);
-        String masked = "\u002a".repeat(box.getValue().length());
-        context.drawString(this.font, masked, this.passwordX + 4, this.passwordY + 6, 0xE0E0E0);
+    private void copyLink(DeviceCode code) {
+        String url = code.browserUrl();
+        Platforms.getMinecraftPlatform().copyText(url == null ? code.verificationUri() : url);
     }
 
     @Override
     public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, this.width, this.height, 0x99000000);
+        this.drawHeader(context);
         super.render(context, mouseX, mouseY, delta);
 
-        this.drawPasswordMask(context);
+        this.drawPasswordMask(context, this.passwordBox, this.passwordX, this.passwordY);
 
-        int centerX = this.width / 2;
-        context.drawCenteredString(this.font, this.title, centerX, 40, 0xFFFFFF);
-        String name = this.server.displayName();
-        Component serverLabel = Component.literal(name == null || name.isBlank() ? this.server.apiRoot() : name);
-        context.drawCenteredString(this.font, serverLabel, centerX, 56, 0xA0A0A0);
+        if (this.oauthAvailable) {
+            // 选中态：按钮自身没有 selected 样式，在两枚切换按钮下方画一条强调线。
+            int x = this.contentX();
+            int selectedX = this.oauthMode ? x : x + TOGGLE_W + PAD;
+            int selectedW = this.oauthMode ? TOGGLE_W : INPUT_W - TOGGLE_W - PAD;
+            context.fill(selectedX, TOP + BTN_H, selectedX + selectedW, TOP + BTN_H + 2, 0xFF90A0FF);
+        }
 
         if (this.oauthMode) {
-            int hintY = TOP + BTN_H + PAD * 3 + BTN_H;
-            context.drawCenteredString(this.font, this.oauthHint(), centerX, hintY, 0x808080);
+            this.center(context, this.oauthHint(), this.hintY, 0xFFE0E0E0);
         }
 
-        if (this.status != null) {
-            context.drawCenteredString(this.font, this.status, centerX, this.height - PAD - BTN_H - 16, 0xA0A0A0);
-        }
+        this.drawStatus(context);
     }
 
     /** OAuth 提示：没有设备码时说明下一步，有设备码时展示验证码与地址。 */

@@ -33,9 +33,6 @@ public class AccountScreen extends Screen {
     private static final int ENTRY_H = 36;
     private static final int LIST_TOP = 48;
 
-    private final Component WORKING = Component.translatable("accountsx.account.general.operating");
-    private final Component ACCOUNT_LIST = Component.translatable("accountsx.account.general.account_list");
-
     private final Screen parent;
     private AccountListWidget accountListWidget;
 
@@ -113,7 +110,14 @@ public class AccountScreen extends Screen {
             y += BTN_H + BTN_GAP;
         }
 
-        this.addField(new ButtonWidget(x, this.height - PAD - BTN_H, buttonWidth, BTN_H,
+        int bottomY = this.height - PAD - BTN_H;
+        AuthServer selectedServer = this.filters.get(this.selectedFilter).server();
+        if (selectedServer != null) {
+            this.addField(new ButtonWidget(x, bottomY - BTN_H - BTN_GAP, buttonWidth, BTN_H,
+                    Component.translatable("accountsx.account.general.remove_auth_server"),
+                    button -> this.removeServer(selectedServer)));
+        }
+        this.addField(new ButtonWidget(x, bottomY, buttonWidth, BTN_H,
                 Component.translatable("accountsx.account.general.add_auth_server"),
                 button -> this.openAddServer()));
 
@@ -167,8 +171,17 @@ public class AccountScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
 
         int centerX = (SIDEBAR_W + PAD + this.width - PAD) / 2;
-        context.drawCenteredString(this.font, TaskScheduler.isRunning() ? WORKING : ACCOUNT_LIST, centerX, PAD, 0xFFFFFF);
-        context.drawCenteredString(this.font, I18N.TRANSLATOR.translate(AccountManager.getCurrentAccount()), centerX, PAD + 12, 0xA0A0A0);
+        BaseAccount current = AccountManager.getCurrentAccount();
+        Component header = current == null
+                ? Component.translatable("accountsx.account.general.current_account.none")
+                : Component.translatable("accountsx.account.general.current_account", current.getAccountStorage().getPlayerName());
+        context.drawCenteredString(this.font, header, centerX, PAD, 0xFFFFFFFF);
+        if (current != null) {
+            Component subtitle = TaskScheduler.isRunning()
+                    ? Component.translatable("accountsx.account.general.operating")
+                    : I18N.TRANSLATOR.translate(current.getAccountType());
+            context.drawCenteredString(this.font, subtitle, centerX, PAD + 12, 0xFFA0A0A0);
+        }
     }
 
     public void addField(AbstractWidget drawable) {
@@ -196,9 +209,26 @@ public class AccountScreen extends Screen {
             return;
         }
         AccountType addType = filter.addType();
-        if (addType != null) {
+        if (addType == AccountType.MICROSOFT) {
+            minecraft.setScreen(new MicrosoftLoginScreen(this));
+        } else if (addType == AccountType.OFFLINE) {
+            minecraft.setScreen(new OfflineLoginScreen(this));
+        } else if (addType != null) {
             UIScreenImpl.login(minecraft, this, addType.getAccountProvider());
         }
+    }
+
+    /**
+     * 移除选中的认证服务器。
+     *
+     * <p>已登录的账号保留（token 仍然有效），只是不再出现在左栏筛选里。删完回到「全部账户」，
+     * 避免选中项指向已经消失的筛选。</p>
+     */
+    private void removeServer(AuthServer server) {
+        AccountManager.authServers().remove(server.apiRoot());
+        this.selectedFilter = 0;
+        this.rebuildFilters();
+        this.updateWidgets();
     }
 
     /**
