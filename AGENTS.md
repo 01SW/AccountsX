@@ -156,6 +156,21 @@ GUI 资源（切换图标 `account.png`、标题屏精灵 `icon/account`、默�
 
 MC/loader/API/authlib/java 版本由 `gradle/adapters.toml` 的 `[[mc]]` 条目按目录名（= MC 版本）提供，适配器自己的 `build.gradle.kts` 只应用 Loom 插件 + `accountsx.mc.adapter`，没有 `adapter { }` 块。Mojang official mappings 由 `accountsx.mc.adapter` 集中添加（通过反射访问 Loom 的 `loom` 扩展，因为 Loom 类不在 buildSrc classpath 上）。
 
+### MC 适配器源码回落
+
+13 个 MC 工程不各自保存完整源码：每个版本目录只放**新增或变化**的 Java 文件，缺失的同路径文件沿 `gradle/adapters.toml` 的 `[[mc]]` 顺序向更早版本回落，最迟到 1.20。回落发生在构建期，选中的源码针对目标版本重新编译——不复用旧 class，也没有跨版本的 Java 继承。
+
+- 解析器：`buildSrc/src/main/kotlin/accountsx/build/AdapterSourceResolver.kt`；`prepareAdapterSources` 把有效源码同步到 `adapters/mc/<ver>/build/generated/adapter-sources/main/java`，`compileJava` 与 `sourcesJar` 共用这一份。
+- 来源报告：`adapters/mc/<ver>/build/reports/adapter-sources`（有效路径 → 来源版本 → 原始相对路径，含删除记录）；`./gradlew :adapters:mc:<ver>:explainAdapterSources` 直接查看。
+- 显式删除：`adapters/mc/<ver>/source-removals.txt`，逐行写 `src/main/java` 下的相对路径；每层先应用继承来的删除，再叠自己的文件，删除没命中即构建失败。
+- 自检：`:checkAdapterSourceResolver`（fixture 覆盖最近文件胜出、多级回落、删除/重新引入、非法删除、命名冲突、无效链）。
+
+后果性约束：
+
+- 新增版本只写差异文件（见「加一个 MC 版本」）；与近邻完全相同的副本没有意义，回落会继承同一份内容。
+- 移动或重命名包路径时，必须在该层 `source-removals.txt` 删掉旧路径，否则同一顶层类会出现两份。
+- `fabric.mod.json` 与 `*.mixins.json` 仍逐版本维护，不参与回落；`:verifyUniversalJar` 会校验嵌套 jar 里的每个 mixin 类都存在。
+
 ### Authlib 适配器（`adapters/authlib/<version>`）
 
 薄桥接层：`AuthlibAdapterImpl` + `AccountSessionImpl`，针对特定 `com.mojang:authlib` 版本。包：`top.syshub.accountsx.authlib`。保持包/类名与 `accountsx:adapter.authlib` 自定义条目对齐（`top.syshub.accountsx.authlib.AuthlibAdapterImpl`）。
@@ -229,13 +244,14 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 
 1. 确定该 MC 版本不能正常运行，非正式版的版本识别可能不正确，需要手动调整依赖再测试
 2. 在 `gradle/adapters.toml` 追加 `[[mc]]` 条目（version / authlib / fabricApi / obfuscated），**漏这步子项目不会被 `include`**
-3. 复制最接近的现有版本目录：`cp -r adapters/mc/<近邻> adapters/mc/<新版本>`
+3. 只建 `build.gradle.kts`，不要整目录拷贝：新版本的 Java 文件放 `adapters/mc/<新版本>/src/main/java/...`，
+   与近邻相同的文件一律不复制（回落会继承），编译报错再按缺口补文件
 4. 改 `adapters/mc/<新版本>/build.gradle.kts` 里的 Loom 插件 id（26.1+ 用 `net.fabricmc.fabric-loom`，否则 `net.fabricmc.fabric-loom-remap`），版本号不写在这里
 5. 按需修改 `MinecraftAdapterImpl` 和 `ui/` 以适配 API 变更
 6. 若当前 MC 版本不适配 authlib 版本，则按「加 authlib 版本」步骤操作
-7. `./gradlew :adapters:mc:<新版本>:build` 并修复编译错误
+7. `./gradlew :adapters:mc:<新版本>:build :checkAdapterSourceResolver` 并修复编译错误
 8. `./gradlew :validateAdapterMatrix`（模拟 Loader 选择，确认新版本选中新适配器）
-9. 构建全量 jar 并在游戏内验证：`./gradlew build`
+9. 构建全量 jar 并在游戏内验证：`./gradlew build`（含 `universal` + `verifyUniversalJar`）
 10. 同步 AGENTS.md 顶部的支持矩阵表
 11. commit：`feat(mc): 新增 MC <版本> 适配器`
 
