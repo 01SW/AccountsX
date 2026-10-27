@@ -4,12 +4,12 @@ import org.jetbrains.annotations.NotNull;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.accounts.BaseAccount;
-import top.syshub.accountsx.common.adapters.api.AccountSession;
+
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.ui.list.AccountListModel;
 import top.syshub.accountsx.common.ui.list.AccountRow;
 import top.syshub.accountsx.common.ui.list.DefaultAccountListModel;
-import top.syshub.accountsx.common.task.TaskScheduler;
+
 import org.jetbrains.annotations.Nullable;
 
 import java.io.ByteArrayInputStream;
@@ -73,27 +73,15 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
 
     @Override
     public void setSelected(@Nullable AccountListWidget.AccountEntry entry) {
-        if (entry != null) {
-            BaseAccount account = entry.account;
-            if (AccountManager.getCurrentAccount() != account) {
-                TaskScheduler.submit(() -> {
-                    if (AccountManager.getCurrentAccount() == account) {
-                        return;
-                    }
-
-                    AccountSession session = AccountManager.loginAccount(account);
-
-                    minecraft.schedule(() -> {
-                        AccountManager.switchAccount(account, session);
-
-                        super.setSelected(entry);
-                        minecraft.getNarrator().sayNow((Component.translatable("narrator.select", entry.account.getAccountStorage().getPlayerName())).getString());
-                    });
-                });
-            }
-        } else {
+        if (entry == null) {
             super.setSelected(null);
+            return;
         }
+
+        this.model.onSelect(entry.account, () -> {
+            super.setSelected(entry);
+            minecraft.getNarrator().sayNow((Component.translatable("narrator.select", entry.account.getAccountStorage().getPlayerName())).getString());
+        });
     }
 
     @Override
@@ -131,14 +119,14 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
             context.drawString(minecraft.font, I18N.TRANSLATOR.translate(this.account.getAccountStorage().getState()), x + 32 + 3, y + 1 + 18, 0xFFFFFF, false);
             context.blit(RenderType::guiTexturedOverlay, avatarTextureId, x, y, 1, 1, 30, 30, 32, 32);
 
-            if (this.account.getAccountType() != AccountType.ENV_DEFAULT) {
-                if (this.fullIndex() > 1) {
+            if (model.isRemovable(this.account)) {
+                if (model.canMoveUp(this.account)) {
                     context.drawString(minecraft.font, ACTION_UP, (int) (x + entryWidth - 1.5 * minecraft.font.width(ACTION_UP)), y + 1 + 5 - minecraft.font.lineHeight / 2, 0xFFFFFF, false);
                 }
 
                 context.drawString(minecraft.font, ACTION_DELETE, (int) (x + entryWidth - 1.5 * minecraft.font.width(ACTION_DELETE)), y + 1 + 15 - minecraft.font.lineHeight / 2, 0xFFFFFF, false);
 
-                if (this.fullIndex() < AccountManager.getAccountsView().size() - 1) {
+                if (model.canMoveDown(this.account)) {
                     context.drawString(minecraft.font, ACTION_DOWN, (int) (x + entryWidth - 1.5 * minecraft.font.width(ACTION_DOWN)), y + 1 + 25 - minecraft.font.lineHeight / 2, 0xFFFFFF, false);
                 }
             }
@@ -152,11 +140,11 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
                 int index = children().indexOf(this);
                 int top = getRowTop(index);
 
-                if (this.account.getAccountType() != AccountType.ENV_DEFAULT) {
-                    if (this.fullIndex() > 1) {
+                if (model.isRemovable(this.account)) {
+                    if (model.canMoveUp(this.account)) {
                         int btnTop = top + 1 + 5 - minecraft.font.lineHeight / 2;
                         if (mouseY >= btnTop && mouseY <= btnTop + minecraft.font.lineHeight) {
-                            AccountManager.moveAccount(this.account, this.fullIndex() - 1);
+                            model.onMove(this.account, -1);
                             AccountListWidget.this.syncAccounts();
                             return false;
                         }
@@ -164,15 +152,15 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
 
                     int btnTop = top + 1 + 15 - minecraft.font.lineHeight / 2;
                     if (mouseY >= btnTop && mouseY <= btnTop + minecraft.font.lineHeight) {
-                        AccountManager.dropAccount(this.account);
+                        model.onRemove(this.account);
                         AccountListWidget.this.syncAccounts();
                         return false;
                     }
 
-                    if (this.fullIndex() < AccountManager.getAccountsView().size() - 1) {
+                    if (model.canMoveDown(this.account)) {
                         int btnTop2 = top + 1 + 25 - minecraft.font.lineHeight / 2;
                         if (mouseY >= btnTop2 && mouseY <= btnTop2 + minecraft.font.lineHeight) {
-                            AccountManager.moveAccount(this.account, this.fullIndex() + 1);
+                            model.onMove(this.account, 1);
                             AccountListWidget.this.syncAccounts();
                             return false;
                         }
@@ -187,10 +175,6 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
         @Override
         public @NotNull Component getNarration() {
             return Component.nullToEmpty("");
-        }
-
-        private int fullIndex() {
-            return AccountManager.getAccountsView().indexOf(this.account);
         }
 
         private ResourceLocation loadAvatar(byte[] imageBytes) {

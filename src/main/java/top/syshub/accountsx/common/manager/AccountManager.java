@@ -135,6 +135,39 @@ public final class AccountManager {
         );
     }
 
+    /**
+     * 切换当前账号：worker 上登录，客户端线程上切会话，随后在客户端线程回调 {@code onSwitched}。
+     *
+     * <p>已经是当前账号时不重复登录，直接回调，调用方无需自己判断。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.CLIENT)
+    public static void selectAccount(BaseAccount account, Runnable onSwitched) {
+        Threading.checkMinecraftClientThread();
+
+        if (account == null) {
+            return;
+        }
+
+        if (repository().getCurrent() == account) {
+            onSwitched.run();
+            return;
+        }
+
+        TaskScheduler.submit(() -> {
+            // 连点两下会排队两次；第二段到这里时已经切完了，不必再登录一次。
+            if (repository().getCurrent() == account) {
+                Platforms.getMinecraftPlatform().execute(onSwitched);
+                return;
+            }
+
+            AccountSession session = loginAccount(account);
+            Platforms.getMinecraftPlatform().execute(() -> {
+                switchAccount(account, session);
+                onSwitched.run();
+            });
+        });
+    }
+
     @Threading.Thread(Threading.ThreadRole.CLIENT)
     public static void switchAccount(BaseAccount account, AccountSession session) {
         Threading.checkMinecraftClientThread();
