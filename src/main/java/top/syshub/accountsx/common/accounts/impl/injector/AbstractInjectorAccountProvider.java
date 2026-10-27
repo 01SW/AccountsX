@@ -2,7 +2,6 @@ package top.syshub.accountsx.common.accounts.impl.injector;
 
 import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.AccountUUID;
-import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.accounts.model.context.AuthPolicy;
 import top.syshub.accountsx.common.accounts.model.context.AuthSecurityContext;
@@ -15,6 +14,7 @@ import top.syshub.accountsx.common.auth.AuthServerMetadata;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
 import top.syshub.accountsx.common.auth.YggdrasilAuthResult;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
+import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.ui.Memory;
@@ -26,8 +26,8 @@ import top.syshub.accountsx.common.ui.form.ValidationOutcome;
 import java.util.List;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 
 /**
  * injector 系账号 provider：UI 编排 + 登录/刷新分发（P3.1 起变薄）。
@@ -37,8 +37,9 @@ import java.util.UUID;
  * 公钥 / skinDomains / OIDC 端点不再每次登录现取——provider 只查
  * {@link AuthServerRegistry} 的内存缓存（启动预热 + 加服时探测，miss 时补测一次）。</p>
  *
- * <p>登录快捷路径（一个表单填服务器 + 凭据）保留：ensure 按 locator 去重，
- * 同服务器第二次登录不再发解析/探测请求。两级 UI（先加服再在服下加账号）属 P3.2。</p>
+ * <p>登录有两条入口：单表单快捷路径 {@link #login(Memory)}（服务器 + 凭据一次填完），以及
+ * 「先选服务器、再选登录方式」的新界面用的 {@link #fetchDeviceCode} / {@link #loginDeviceCode} /
+ * {@link #loginPassword}。</p>
  */
 public abstract class AbstractInjectorAccountProvider<T extends AbstractInjectorAccount> implements AccountProvider<T> {
 
@@ -143,12 +144,27 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             result = YggdrasilPasswordFlow.login(http, server, username,
                     memory.get(GUID_PASSWORD, String.class), memory.get(GUID_PLAYER_NAME, String.class));
 
-        T account = createAccount(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()),
-                server.apiRoot(), result.playerUuid(), server.displayName(), result.avatarKey(), result.avatarCachedAt());
-        if (result.refreshToken() != null)
-            account.setLoginProfile(AccountOAuth.envelope(result.refreshToken(), result.tokenEndpoint(), result.clientId()),
-                    result.playerUuid());
-        return account;
+        return toAccount(server, result);
+    }
+
+    /**
+     * 新登录界面第一阶段：只从注册表缓存换设备码，不做端点探测。
+     *
+     * <p>端点缺失时抛 {@link IOException}——界面据此只显示密码登录，而不是在登录时偷偷联网探测。</p>
+     */
+    public DeviceCode fetchDeviceCode(AuthServer server) throws IOException {
+        return YggdrasilDeviceCodeFlow.requestDeviceCode(http, server);
+    }
+
+    /** 新登录界面第二阶段：用户完成授权后轮询换取账号；{@code cancelled} 为真时尽快放弃。 */
+    public T loginDeviceCode(AuthServer server, DeviceCode code, BooleanSupplier cancelled) throws IOException {
+        return toAccount(server, YggdrasilDeviceCodeFlow.awaitToken(http, server, code,
+                YggdrasilDeviceCodeFlow.cancellableSleep(cancelled), cancelled));
+    }
+
+    /** 新登录界面：用户名 + 密码直接换账号（不经过表单 {@link Memory}）。 */
+    public T loginPassword(AuthServer server, String username, String password) throws IOException {
+        return toAccount(server, YggdrasilPasswordFlow.login(http, server, username, password, ""));
     }
 
     @Override
@@ -163,5 +179,15 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             return;
         }
         YggdrasilPasswordFlow.refresh(http, account);
+    }
+
+    /** 三种登录入口共用的落地映射：建账号 + 有 refresh_token 就写 OAuth 信封。 */
+    private T toAccount(AuthServer server, YggdrasilAuthResult result) {
+        T account = createAccount(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()),
+                server.apiRoot(), result.playerUuid(), server.displayName(), result.avatarKey(), result.avatarCachedAt());
+        if (result.refreshToken() != null)
+            account.setLoginProfile(AccountOAuth.envelope(result.refreshToken(), result.tokenEndpoint(), result.clientId()),
+                    result.playerUuid());
+        return account;
     }
 }
