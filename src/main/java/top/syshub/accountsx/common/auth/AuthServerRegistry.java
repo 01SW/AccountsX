@@ -225,6 +225,22 @@ public final class AuthServerRegistry {
                 System.currentTimeMillis());
     }
 
+    /** 移除条目（UI「移除认证服务器」）；返回是否真的删掉了，删掉后触发持久化。 */
+    public boolean remove(String apiRoot) {
+        if (apiRoot == null) {
+            return false;
+        }
+        boolean removed;
+        synchronized (this) {
+            removed = servers.remove(apiRoot) != null;
+            metadata.remove(apiRoot);
+        }
+        if (removed && onChange != null) {
+            onChange.run();
+        }
+        return removed;
+    }
+
     /**
      * 登录期兜底发现的 OAuth 端点回写（P3.1 c2）：预热失败的条目在 device 登录成功后
      * 把 discover 结果并回 servers[] 并落盘，避免每次登录重复 GET 根+openid。
