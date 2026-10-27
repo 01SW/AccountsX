@@ -12,6 +12,7 @@ import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.AuthServerMetadata;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.OAuthClientIds;
 import top.syshub.accountsx.common.auth.YggdrasilAuthResult;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
@@ -135,11 +136,11 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         String username = memory.get(GUID_USER_NAME, String.class);
 
         // 加服语义：解析 + 探测 + 校验 + 去重；已知的服务器直接复用（不再发任何探测请求）。
-        AuthServer server = registry().ensure(serverKind(), locator, OAuthConstants.OAUTH_CLIENT_IDS);
+        AuthServer server = registry().ensure(serverKind(), locator, OAuthClientIds.BY_HOST);
 
         YggdrasilAuthResult result;
         if (username.isEmpty())
-            result = YggdrasilDeviceCodeFlow.login(http, devicePrompts(), server, OAuthConstants.OAUTH_CLIENT_IDS);
+            result = YggdrasilDeviceCodeFlow.login(http, devicePrompts(), server, OAuthClientIds.BY_HOST);
         else
             result = YggdrasilPasswordFlow.login(http, server, username,
                     memory.get(GUID_PASSWORD, String.class), memory.get(GUID_PLAYER_NAME, String.class));

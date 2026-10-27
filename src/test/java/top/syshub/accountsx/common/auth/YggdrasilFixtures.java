@@ -33,7 +33,6 @@ final class YggdrasilFixtures {
         JsonObject meta = new JsonObject();
         meta.addProperty("serverName", "FakeInjector");
         meta.addProperty("feature.openid_configuration_url", apiRoot + "/.well-known/openid");
-        meta.addProperty("shared_client_id", "fake-shared-client");
 
         JsonObject root = new JsonObject();
         root.addProperty("signaturePublickey", rsaPublicKeyPem());
@@ -49,6 +48,7 @@ final class YggdrasilFixtures {
         config.addProperty("device_authorization_endpoint", apiRoot + "/oauth/device");
         config.addProperty("token_endpoint", apiRoot + "/oauth/token");
         config.addProperty("userinfo_endpoint", apiRoot + "/oauth/userinfo");
+        config.addProperty("shared_client_id", "fake-shared-client");
         return config;
     }
 

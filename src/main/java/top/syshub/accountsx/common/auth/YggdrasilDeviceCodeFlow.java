@@ -268,7 +268,7 @@ public final class YggdrasilDeviceCodeFlow {
         return YggdrasilProfiles.readProfiles(userinfo).get(0);
     }
 
-    /** 兜底发现：GET 根路径取 openid_configuration_url，再取端点与 clientId（host 表 > shared_client_id）。 */
+    /** 兜底发现：GET 根路径取 openid_configuration_url，再取端点与 clientId（内置 host 表 > YGGC 的 shared_client_id）。 */
     static OAuthEndpoints discover(HttpGateway http, String apiRoot, Map<String, String> knownClientIds)
             throws IOException {
         JsonObject ygg = http.get(apiRoot);
@@ -286,11 +286,8 @@ public final class YggdrasilDeviceCodeFlow {
         String clientId;
         String host = URI.create(apiRoot).getHost();
         String known = knownClientIds == null ? null : knownClientIds.get(host);
-        if (known != null)
-            clientId = known;
-        else if (config.get("shared_client_id") instanceof JsonPrimitive jp2 && jp2.isString())
-            clientId = jp2.getAsString();
-        else
+        clientId = known != null ? known : YggdrasilServerProbe.sharedClientId(config);
+        if (clientId == null)
             throw new IOException("Invalid client id!");
         return new OAuthEndpoints(clientId, tokenEndpoint, deviceEndpoint, userinfo);
     }

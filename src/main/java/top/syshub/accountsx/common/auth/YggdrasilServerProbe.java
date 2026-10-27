@@ -113,22 +113,24 @@ public final class YggdrasilServerProbe {
             Map<String, String> knownClientIds) throws IOException {
         if (meta == null)
             return null;
+        String openidUrl = str(meta.get("feature.openid_configuration_url"));
+        if (openidUrl == null)
+            return null;
         String host = null;
         try {
             host = URI.create(apiRoot).getHost();
         } catch (IllegalArgumentException ignored) {
         }
-        String known = host == null || knownClientIds == null ? null : knownClientIds.get(host);
-        String sharedClientId = str(meta.get("shared_client_id"));
-        String clientId = known != null ? known : sharedClientId;
-        String openidUrl = str(meta.get("feature.openid_configuration_url"));
-        if (openidUrl == null)
-            return clientId == null ? null : new OAuthEndpoints(clientId, null, null, null);
+        // clientId 只有两个来源：内置 host 表 > YGGC（Yggdrasil Connect）openid 配置里的 shared_client_id。
+        // 两处都取不到就判定该服务器不支持 OAuth（退回密码登录），不再凭端点存在瞎猜。
+        String clientId = host == null || knownClientIds == null ? null : knownClientIds.get(host);
         JsonObject config = http.get(openidUrl);
         String device = str(config.get("device_authorization_endpoint"));
         String token = str(config.get("token_endpoint"));
         String userinfo = str(config.get("userinfo_endpoint"));
-        if (clientId == null && device == null && token == null && userinfo == null)
+        if (clientId == null)
+            clientId = sharedClientId(config);
+        if (clientId == null)
             return null;
         return new OAuthEndpoints(clientId, token, device, userinfo);
     }
@@ -146,5 +148,11 @@ public final class YggdrasilServerProbe {
 
     private static String str(JsonElement e) {
         return e instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
+    }
+
+    /** 读 YGGC openid 配置里的 shared_client_id（规范把它放这里，根 meta 中不会有）：字符串与数字都要认。 */
+    static String sharedClientId(JsonObject json) {
+        JsonElement e = json == null ? null : json.get("shared_client_id");
+        return e instanceof JsonPrimitive p && (p.isString() || p.isNumber()) ? p.getAsString() : null;
     }
 }

@@ -119,6 +119,11 @@ public final class AuthServerRegistry {
             array.add(jo);
     }
 
+    /** 加服：clientId 默认取内置 host 表，调用方不必关心它。 */
+    public AuthServer ensure(AuthServerKind kind, String locator) throws IOException {
+        return ensure(kind, locator, OAuthClientIds.BY_HOST);
+    }
+
     /** 加服（P3.2 UI 入口；P3.1 由登录快捷路径隐式使用）：解析 → 探测 → 校验 → 去重。 */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public AuthServer ensure(AuthServerKind kind, String locator, Map<String, String> knownClientIds)
@@ -169,6 +174,11 @@ public final class AuthServerRegistry {
         if (inserted && onChange != null)
             onChange.run();
         return probed;
+    }
+
+    /** 启动预热：clientId 默认取内置 host 表。 */
+    public void refreshAll() {
+        refreshAll(OAuthClientIds.BY_HOST);
     }
 
     /** 启动预热：逐个探测 injector 条目；失败保留旧条目（stale），不阻塞。 */

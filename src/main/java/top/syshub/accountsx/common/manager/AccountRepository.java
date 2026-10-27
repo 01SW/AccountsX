@@ -14,7 +14,7 @@ import top.syshub.accountsx.common.accounts.impl.injector.impl.UnitedInjectorAcc
 import top.syshub.accountsx.common.accounts.impl.microsoft.MicrosoftAccount;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
-import top.syshub.accountsx.common.accounts.impl.injector.OAuthConstants;
+
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
@@ -117,7 +117,7 @@ public final class AccountRepository {
      * 失败保留旧条目（stale）、不阻塞。之后登录/刷新只读内存。
      */
     public void warmAuthServers() {
-        TaskScheduler.submit(() -> authServers.refreshAll(OAuthConstants.OAUTH_CLIENT_IDS));
+        TaskScheduler.submit(() -> authServers.refreshAll());
     }
 
     /**

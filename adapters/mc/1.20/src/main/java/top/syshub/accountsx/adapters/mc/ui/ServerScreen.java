@@ -9,7 +9,6 @@ import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
 
-import java.util.Map;
 
 /**
  * 添加外置认证服务器。
@@ -82,7 +81,7 @@ public class ServerScreen extends Screen {
         TaskScheduler.submit(() -> {
             Component failure = null;
             try {
-                AccountManager.authServers().ensure(AuthServerKind.YGGDRASIL, locator, Map.of());
+                AccountManager.authServers().ensure(AuthServerKind.YGGDRASIL, locator);
             } catch (Exception e) {
                 String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 failure = Component.translatable("accountsx.account.server.fail", detail);
