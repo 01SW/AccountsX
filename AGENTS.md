@@ -132,6 +132,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 3. UI（各 MC 版本的 `AccountScreen`）在**客户端线程**上修改账号
 4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
+6. 删除正在使用的账号：仓储把 current 指针落回默认账号（`ENV_DEFAULT`，即启动器会话），随后 Manager 在 worker 上登录它、在客户端线程上切回会话——与会话切换同一条链路；没有环境账号可回落时指针清空、游戏会话维持原样
 
 `@Threading.Thread` 文档标注预期线程；`Threading.checkMinecraftClientThread()` / `checkAccountWorkerThread()` 强制执行。不要在 worker 线程外调用 profile 修改 API。
 

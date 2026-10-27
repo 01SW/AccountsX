@@ -83,7 +83,25 @@ public final class AccountManager {
             return;
         }
 
+        // drop 之后仓储的 current 会落回默认账号，所以要先把「删的是不是当前账号」问出来。
+        boolean wasCurrent = repository().getCurrent() == account;
         repository().drop(account);
+
+        if (!wasCurrent) {
+            return;
+        }
+
+        BaseAccount fallback = repository().getCurrent();
+        if (fallback == null) {
+            // 没有环境账号可回落：只留下列表，游戏会话维持原样。
+            return;
+        }
+
+        // 与点击列表项走同一条链路：worker 上登录，客户端线程上切会话。
+        TaskScheduler.submit(() -> {
+            AccountSession session = loginAccount(fallback);
+            Platforms.getMinecraftPlatform().execute(() -> switchAccount(fallback, session));
+        });
     }
 
     @Threading.Thread(Threading.ThreadRole.CLIENT)

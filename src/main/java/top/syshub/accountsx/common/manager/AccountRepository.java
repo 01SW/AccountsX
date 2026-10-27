@@ -219,8 +219,26 @@ public final class AccountRepository {
     }
 
     public synchronized void drop(BaseAccount account) {
-        if (account != null && accounts.remove(account))
-            markDirty();
+        if (account == null || !accounts.remove(account))
+            return;
+        // 删掉的正是当前账号：指针立刻落回默认账号（启动器会话），别留着指向已删除的对象。
+        // 真正的游戏会话切换由 AccountManager 在 worker 上做——仓储只管状态。
+        if (current == account)
+            current = defaultAccount();
+        markDirty();
+    }
+
+    /**
+     * 默认账号：启动器会话（{@link AccountType#ENV_DEFAULT}）。它永远排在列表首位且不可删除/移动，
+     * 所以「当前账号被删掉」时回落到它就是回到「刚开游戏」的状态。没有环境账号（例如启动器
+     * 没给会话）时返回 {@code null}，此时列表里没有可回落的账号。
+     */
+    public synchronized BaseAccount defaultAccount() {
+        for (BaseAccount account : accounts) {
+            if (account.getAccountType() == AccountType.ENV_DEFAULT)
+                return account;
+        }
+        return null;
     }
 
     public synchronized void move(BaseAccount account, int index) {

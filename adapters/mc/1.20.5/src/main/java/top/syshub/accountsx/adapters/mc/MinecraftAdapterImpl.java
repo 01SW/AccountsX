@@ -88,6 +88,12 @@ public class MinecraftAdapterImpl implements MinecraftPlatform<AccountSessionImp
     }
 
     @Override
+    public void execute(Runnable task) {
+        // 与 crash() 同一条客户端线程派发路径。
+        Minecraft.getInstance().tell(task);
+    }
+
+    @Override
     public void crash(RuntimeException e) {
         Minecraft.getInstance().tell(() -> {
             throw e;

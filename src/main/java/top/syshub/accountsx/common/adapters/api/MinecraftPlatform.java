@@ -13,6 +13,9 @@ public interface MinecraftPlatform<S extends AccountSession> {
 
     Thread getMinecraftClientThread();
 
+    /** 把任务交给客户端线程执行（就是 {@link #getMinecraftClientThread()} 那条线程）。 */
+    void execute(Runnable task);
+
     void openBrowser(String url);
 
     void crash(RuntimeException e);

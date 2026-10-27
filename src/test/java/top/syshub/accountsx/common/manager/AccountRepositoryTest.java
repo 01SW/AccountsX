@@ -271,6 +271,49 @@ class AccountRepositoryTest {
         assertThat(writes.get(0)).as("环境账号不落盘").isEqualTo("");
     }
 
+    @Test
+    void dropCurrent_fallsBackToEnvironmentAccount() throws Exception {
+        AccountRepository repository = repo(MigrationChain.EMPTY);
+        top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount env =
+                new top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount(
+                        "fake-token", "Player", UUID.randomUUID());
+        repository.initialize(env, null);
+        OfflineAccount steve = offline("Steve", "069a79f444e94726a5befca90e38aaf5");
+        repository.add(steve);
+        repository.setCurrent(steve);
+
+        repository.drop(steve);
+
+        assertThat(repository.view()).containsExactly(env);
+        assertThat(repository.getCurrent()).as("当前账号被删 → 指针回到默认（启动器）账号").isSameAs(env);
+    }
+
+    @Test
+    void dropNonCurrent_keepsCurrent() throws Exception {
+        AccountRepository repository = repo(MigrationChain.EMPTY);
+        OfflineAccount steve = offline("Steve", "069a79f444e94726a5befca90e38aaf5");
+        OfflineAccount alex = offline("Alex", "069a79f444e94726a5befca90e38aaf6");
+        repository.add(steve);
+        repository.add(alex);
+        repository.setCurrent(steve);
+
+        repository.drop(alex);
+
+        assertThat(repository.getCurrent()).as("删的不是当前账号，指针不动").isSameAs(steve);
+    }
+
+    @Test
+    void dropCurrent_withoutEnvironment_clearsCurrent() {
+        AccountRepository repository = repo(MigrationChain.EMPTY);
+        OfflineAccount steve = offline("Steve", "069a79f444e94726a5befca90e38aaf5");
+        repository.add(steve);
+        repository.setCurrent(steve);
+
+        repository.drop(steve);
+
+        assertThat(repository.getCurrent()).as("没有环境账号可回落 → 指针清空").isNull();
+    }
+
     // ── 新旧映射往返 ────────────────────────────────────────────────
 
     @Test
