@@ -7,6 +7,8 @@ import top.syshub.accountsx.common.utils.NetworkUtils;
 import java.io.IOException;
 import java.io.Reader;
 import java.net.URI;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,13 +25,32 @@ import java.util.Map;
  * 避免再维护一份配置漂移的 Gson。</p>
  */
 public final class JdkHttpGateway implements HttpGateway {
-    public static final JdkHttpGateway INSTANCE = new JdkHttpGateway();
+    /**
+     * 单个请求（连接 + 响应）的上限。
+     *
+     * <p>没有超时时，一个不响应的认证服务器会把刷新任务永久占住：启动批次的
+     * {@code runParallel} 永远不回调，UI 上的账号一直停在「正在登录」，而且并发的
+     * 后续刷新会被去重逻辑一直等待，整条刷新链路就此卡死。</p>
+     */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(10))
             .build();
 
+    // 必须声明在常量之后：静态初始化按源码顺序执行，放在前面会拿到 null 超时。
+    public static final JdkHttpGateway INSTANCE = new JdkHttpGateway();
+
+    private final Duration requestTimeout;
+
     private JdkHttpGateway() {
+        this(REQUEST_TIMEOUT);
+    }
+
+    /** 测试用：以更短的超时构造，便于在本地起一个延迟响应的服务端验证超时行为。 */
+    JdkHttpGateway(Duration requestTimeout) {
+        this.requestTimeout = requestTimeout;
     }
 
     /** {@inheritDoc} */
@@ -41,7 +62,7 @@ public final class JdkHttpGateway implements HttpGateway {
     /** {@inheritDoc} */
     @Override
     public JsonObject get(String url, Map<String, String> headers) throws IOException {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url)).GET();
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET();
         headers.forEach(builder::header);
         return sendJson(builder.build(), false);
     }
@@ -56,6 +77,7 @@ public final class JdkHttpGateway implements HttpGateway {
     @Override
     public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(NetworkUtils.GSON.toJson(body)))
                 .build();
@@ -72,6 +94,7 @@ public final class JdkHttpGateway implements HttpGateway {
     @Override
     public JsonObject postForm(String url, Map<String, String> formData, boolean ignoreHttpStatus) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(requestTimeout)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(encodeForm(formData)))
                 .build();
@@ -82,6 +105,7 @@ public final class JdkHttpGateway implements HttpGateway {
     @Override
     public Map<String, List<String>> head(String url) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(requestTimeout)
                 .method("HEAD", HttpRequest.BodyPublishers.noBody())
                 .build();
         try {
@@ -96,7 +120,7 @@ public final class JdkHttpGateway implements HttpGateway {
     /** {@inheritDoc} */
     @Override
     public byte[] getBinary(String url) throws IOException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url)).GET().build();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
         try {
             HttpResponse<byte[]> response = CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
             // 校验状态码：非 2xx 抛 IOException，与 JSON 路径一致。
@@ -117,6 +141,9 @@ public final class JdkHttpGateway implements HttpGateway {
             try (Reader reader = NetworkUtils.readResponse(response, ignoreHttpStatus)) {
                 return NetworkUtils.GSON.fromJson(reader, JsonObject.class);
             }
+        } catch (HttpTimeoutException e) {
+            // 单独成句：刷新失败时用户/作者能一眼看出是服务端不响应，而不是「登录失败」。
+            throw new IOException("Request to " + request.uri() + " timed out after " + requestTimeout.toSeconds() + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted.", e);
