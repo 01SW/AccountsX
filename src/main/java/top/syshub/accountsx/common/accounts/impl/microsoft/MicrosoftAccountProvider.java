@@ -97,13 +97,16 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
             ), true);
 
             JsonElement err = token.get("error");
-            if (err == null) {
+            if (err == null || err.isJsonNull()) {
                 microsoftAccessToken = token.get("access_token").getAsString();
                 microsoftRefreshToken = token.get("refresh_token").getAsString();
                 break;
             }
 
-            String error = err.getAsString();
+            // error 不是字符串时按不可读处理，而不是让 getAsString() 炸出 UnsupportedOperationException。
+            String error = err instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
+            if (error == null)
+                throw new IOException("Token endpoint returned an unreadable error.");
 
             if ("authorization_pending".equals(error)) {
                 continue;
@@ -217,11 +220,14 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
     @Override
     public void refresh(MicrosoftAccount account) throws IOException {
         {
+            // ignoreHttpStatus=true：RFC 6749 §5.2 的错误体（400/401 + {error, error_description}）
+            // 比裸「HTTP 400」有用得多，invalid_grant 时用户能知道是令牌被吊销而不是网络坏了。
             JsonObject token = http.postForm(TOKEN_URL, Map.of(
                     "client_id", CLIENT_ID,
                     "refresh_token", account.getMicrosoftAccountRefreshToken(),
                     "grant_type", "refresh_token"
-            ));
+            ), true);
+            throwIfRejected(token);
 
             account.setMicrosoftAccountToken(
                     token.get("access_token").getAsString(),
@@ -290,6 +296,23 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         account.setProfile(accessToken, playerName, AccountUUID.parse(playerUUID), expiresAt);
         AvatarService.AvatarKey avatar = AvatarService.fetch(http, SESSION + "/session/minecraft/profile/", playerUUID);
         account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+    }
+
+    /**
+     * 令牌端点错误体（RFC 6749 §5.2）：{@code error} / {@code error_description}。
+     * 消息里只带这两项，绝不拼整个响应体——错误响应之外的字段可能带着令牌。
+     */
+    private static void throwIfRejected(JsonObject token) throws IOException {
+        JsonElement err = token.get("error");
+        if (err == null || err.isJsonNull())
+            return;
+        String error = err instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
+        if (error == null)
+            throw new IOException("Token endpoint returned an unreadable error.");
+        JsonElement desc = token.get("error_description");
+        String description = desc instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
+        throw new IOException("Token endpoint rejected the request: " + error
+                + (description == null ? "" : " (" + description + ")"));
     }
 
     /**

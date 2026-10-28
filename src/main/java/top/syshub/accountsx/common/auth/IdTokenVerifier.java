@@ -101,8 +101,10 @@ public final class IdTokenVerifier {
         if (expPrimitive.getAsLong() + CLOCK_SKEW_SECONDS < now)
             throw new IOException("id token has expired");
         JsonElement iatElement = claims.get("iat");
-        if (iatElement instanceof JsonPrimitive iatPrimitive && iatPrimitive.isNumber()
-                && iatPrimitive.getAsLong() - CLOCK_SKEW_SECONDS > now)
+        // iat 与 exp 同为必具声明：缺失的令牌无法证明签发时刻，一律拒绝而不是假定它有效。
+        if (!(iatElement instanceof JsonPrimitive iatPrimitive) || !iatPrimitive.isNumber())
+            throw new IOException("id token has no issued-at time");
+        if (iatPrimitive.getAsLong() - CLOCK_SKEW_SECONDS > now)
             throw new IOException("id token was issued in the future");
         return claims;
     }

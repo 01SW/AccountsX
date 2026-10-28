@@ -160,6 +160,16 @@ class IdTokenVerifierTest {
     }
 
     @Test
+    void tokenWithoutIssuedAt_isRejected() throws Exception {
+        JsonObject claims = claims();
+        claims.remove("iat");
+
+        assertThatThrownBy(() -> verifyValid(token(keyPair, "RS256", claims)))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("no issued-at time");
+    }
+
+    @Test
     void tokenWithoutExpiry_isRejected() throws Exception {
         JsonObject claims = claims();
         claims.remove("exp");
