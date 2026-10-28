@@ -240,9 +240,11 @@ public class AccountScreen extends Screen {
                 : Component.translatable("accountsx.account.general.current_account", current.getAccountStorage().getPlayerName());
         context.drawCenteredString(this.font, header, centerX, PAD, 0xFFFFFFFF);
         if (current != null) {
+            // 外置账号的类型名对所有服务器都一样，没有信息量；来源是它所在的认证服务器。
+            String serverName = AccountManager.serverDisplayName(current);
             Component subtitle = TaskScheduler.isRunning()
                     ? Component.translatable("accountsx.account.general.operating")
-                    : I18N.TRANSLATOR.translate(current.getAccountType());
+                    : serverName != null ? Component.literal(serverName) : I18N.TRANSLATOR.translate(current.getAccountType());
             context.drawCenteredString(this.font, subtitle, centerX, PAD + 12, 0xFFA0A0A0);
         }
     }

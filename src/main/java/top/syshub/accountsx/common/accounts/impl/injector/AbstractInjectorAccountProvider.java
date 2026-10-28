@@ -21,10 +21,13 @@ import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow;
 import top.syshub.accountsx.common.auth.YggdrasilProfiles;
 import top.syshub.accountsx.common.net.HttpGateway;
+import top.syshub.accountsx.common.utils.AvatarService;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
@@ -137,6 +140,24 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             accounts.add(toAccount(server, result));
         }
         return accounts;
+    }
+
+    /**
+     * 多角色选择界面的头像：为每个候选角色取一次皮肤缓存键。
+     *
+     * <p>必须在这里（worker 线程上）取完：选择态本身不联网，界面重绘时再去请求会让每一帧都发网络。
+     * 取不到的角色直接缺席，界面回落到默认头像——皮肤不是登录的必要条件。</p>
+     */
+    public Map<String, String> avatarKeys(AuthServer server, List<YggdrasilProfiles.Profile> profiles) {
+        String profileUrl = server.apiRoot() + "/sessionserver/session/minecraft/profile/";
+        Map<String, String> keys = new HashMap<>();
+        for (YggdrasilProfiles.Profile profile : profiles) {
+            AvatarService.AvatarKey key = AvatarService.fetch(http, profileUrl, profile.playerUuid());
+            if (key != null) {
+                keys.put(profile.playerUuid(), key.key());
+            }
+        }
+        return keys;
     }
 
     /** 单角色快捷入口（无界面的调用方）：认证 + 自动绑定第一个角色。 */

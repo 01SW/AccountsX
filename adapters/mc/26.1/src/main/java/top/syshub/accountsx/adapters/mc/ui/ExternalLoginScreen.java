@@ -18,10 +18,15 @@ import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow.LoginDraft;
 import top.syshub.accountsx.common.auth.YggdrasilProfiles.Profile;
 import top.syshub.accountsx.common.task.TaskScheduler;
 import top.syshub.accountsx.common.ui.SelectionStyle;
+import top.syshub.accountsx.common.utils.image.AvatarCache;
+import top.syshub.accountsx.common.utils.image.AvatarPixels;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,13 +43,21 @@ import java.util.Set;
 public class ExternalLoginScreen extends LoginScreen {
     private static final int TOGGLE_W = (INPUT_W - PAD) / 2;
 
+    /** 页头（标题 40 / 副标题 56）之下的第一条可用线：控件上移时不许越过它。 */
+    private static final int HEADER_BOTTOM = 72;
+
+    /** OAuth 提示行：固定在页头下方，避免和会随窗口移动的控件互相压字。 */
+    private static final int HINT_Y = 84;
+    /** 选择态头像：画在角色按钮左侧，边长与内缩都按 16 像素的整数倍排。 */
+    private static final int AVATAR_SIZE = 16;
+    private static final int AVATAR_INSET = 2;
+
     private final AuthServer server;
     private final AbstractInjectorAccountProvider<?> provider;
     private final boolean oauthAvailable;
 
     private boolean oauthMode;
     private DeviceCode deviceCode;
-    private int hintY;
 
     private EditBox usernameBox;
     private EditBox passwordBox;
@@ -63,6 +76,13 @@ public class ExternalLoginScreen extends LoginScreen {
      */
     private String pendingUsername;
     private String pendingSecret;
+
+    /** 候选角色 uuid → 皮肤缓存键；取不到的角色缺席，界面回落到占位。 */
+    private Map<String, String> candidateAvatars = Map.of();
+
+    /** 已注册的头像纹理，按皮肤缓存键复用——重绘时不能再读盘、更不能重复注册。 */
+    /** 已解码的头像像素（皮肤缓存键 → 16×16 ARGB），翻页重绘不重复解码。 */
+    private final Map<String, int[]> avatarTextures = new HashMap<>();
 
     public ExternalLoginScreen(Screen parent, AuthServer server) {
         super(parent, "accountsx.account.general.login", label(server));
@@ -84,12 +104,14 @@ public class ExternalLoginScreen extends LoginScreen {
         this.clearWidgets();
 
         int x = this.contentX();
-        int y = TOP;
 
         if (this.candidates != null) {
-            this.addProfileSelection(x, y);
+            this.addProfileSelection(x);
             return;
         }
+
+        // 窗口不够高时整段控件上移，但不越过页头；提示行有固定位置，不参与这套浮动。
+        int y = this.contentTop(this.formStackHeight());
 
         if (this.oauthAvailable) {
             this.addField(new ButtonWidget(x, y, TOGGLE_W, BTN_H,
@@ -149,8 +171,19 @@ public class ExternalLoginScreen extends LoginScreen {
             y += BTN_H + PAD;
         }
 
-        this.hintY = y;
         this.addBackButton();
+    }
+
+    /** 登录表单整段占的高度：模式切换行（可选）+ 动作行（OAuth 一行 / 密码三行）。 */
+    private int formStackHeight() {
+        int height = this.oauthAvailable ? BTN_H + PAD * 2 : 0;
+        height += (this.oauthMode ? 1 : 3) * (BTN_H + PAD);
+        return height;
+    }
+
+    /** 控件区顶部：正常从 TOP 开始，窗口太矮时上移到底边上限之内。 */
+    private int contentTop(int stackHeight) {
+        return Math.max(HEADER_BOTTOM, Math.min(TOP, this.limitY() - stackHeight));
     }
 
     /**
@@ -158,7 +191,7 @@ public class ExternalLoginScreen extends LoginScreen {
      *
      * <p>角色按钮不带 selected 样式，用前缀符号表达勾选，这样点击就是切换、不需要额外的复选框控件。</p>
      */
-    private void addProfileSelection(int x, int y) {
+    private void addProfileSelection(int x) {
         List<Profile> list = this.candidates;
         if (list == null) {
             return;
@@ -170,6 +203,7 @@ public class ExternalLoginScreen extends LoginScreen {
         this.candidatePage = Math.min(this.candidatePage, pages - 1);
         int start = this.candidatePage * capacity;
         int end = Math.min(list.size(), start + capacity);
+        int y = this.selectionRowsTop(capacity);
         for (int i = start; i < end; i++) {
             Profile profile = list.get(i);
             boolean selected = this.chosen.contains(profile.playerUuid());
@@ -203,14 +237,28 @@ public class ExternalLoginScreen extends LoginScreen {
         this.addBackButton();
     }
 
-    /** 「添加所选角色」那一行的高度位置：压着底部返回按钮，两者之间留一段。 */
+    /** 「添加所选角色」那一行：紧贴状态行上方（状态行本身在返回按钮上方）。 */
     private int confirmY() {
-        return this.height - PAD - BTN_H - PAD - BTN_H;
+        return this.limitY() - BTN_H;
     }
 
+    /**
+     * 一页能放几行角色。
+     *
+     * <p>正常高度下按 TOP 起算；窗口太矮时退到页头下方，能塞几行塞几行——宁可挤也不能把控件排出屏幕。</p>
+     */
     private int rowCapacity() {
         int available = this.confirmY() - PAD - TOP;
-        return Math.max(1, available / (BTN_H + PAD));
+        if (available >= BTN_H + PAD) {
+            return available / (BTN_H + PAD);
+        }
+        int squeezed = this.confirmY() - PAD - HEADER_BOTTOM;
+        return Math.max(1, squeezed / (BTN_H + PAD));
+    }
+
+    /** 角色行起点：正常是 TOP，行数多到压住确认按钮时整体上移。 */
+    private int selectionRowsTop(int capacity) {
+        return Math.max(HEADER_BOTTOM, Math.min(TOP, this.confirmY() - PAD - capacity * (BTN_H + PAD)));
     }
 
     private int pageCount() {
@@ -273,6 +321,8 @@ public class ExternalLoginScreen extends LoginScreen {
         this.candidatePage = 0;
         this.pendingUsername = null;
         this.pendingSecret = null;
+        this.candidateAvatars = Map.of();
+        this.avatarTextures.clear();
     }
 
     @Override
@@ -400,14 +450,20 @@ public class ExternalLoginScreen extends LoginScreen {
 
         TaskScheduler.submit(() -> {
             LoginDraft result = null;
+            Map<String, String> avatars = Map.of();
             Component failure = null;
             try {
                 result = this.provider.loginPasswordDraft(this.server, username, secret);
+                // 头像跟着认证一起取：选择态只画界面不联网，每个角色一次请求放在这一趟 worker 里。
+                if (result.profiles().size() > 1) {
+                    avatars = this.provider.avatarKeys(this.server, result.profiles());
+                }
             } catch (Exception e) {
                 failure = failText(e);
             }
 
             LoginDraft authenticated = result;
+            Map<String, String> avatarKeys = avatars;
             Component error = failure;
             Minecraft minecraft = this.minecraft;
             if (minecraft == null) {
@@ -423,13 +479,14 @@ public class ExternalLoginScreen extends LoginScreen {
                     this.updateWidgets();
                     return;
                 }
-                this.afterAuthenticate(username, secret, authenticated);
+                this.afterAuthenticate(username, secret, authenticated, avatarKeys);
             });
         });
     }
 
     /** 认证成功后分流：只有一个候选就直接建号，多个则进选择态（服务端已绑的那个预先勾上）。 */
-    private void afterAuthenticate(String username, String secret, LoginDraft authenticated) {
+    private void afterAuthenticate(String username, String secret, LoginDraft authenticated,
+            Map<String, String> avatars) {
         Profile bound = authenticated.bound();
         List<Profile> available = authenticated.profiles();
         if (available.isEmpty()) {
@@ -455,6 +512,7 @@ public class ExternalLoginScreen extends LoginScreen {
         }
         this.pendingUsername = username;
         this.pendingSecret = secret;
+        this.candidateAvatars = avatars;
         this.candidatePage = 0;
         this.status = null;
         this.updateWidgets();
@@ -495,10 +553,33 @@ public class ExternalLoginScreen extends LoginScreen {
                     this.updateWidgets();
                     return;
                 }
+                BaseAccount preferred = preferredAccount(accounts, authenticated);
                 this.clearSelection();
-                this.finish(accounts);
+                this.finish(accounts, preferred);
             });
         });
+    }
+
+    /**
+     * 一次建多个账号时切到哪个：优先服务端原本就绑定的那个角色——下次登录本来就会用它，
+     * 换成别的等于替用户做了一次「换角色」；没有绑定记录时退到勾选的第一个。
+     */
+    private static BaseAccount preferredAccount(List<? extends BaseAccount> accounts, LoginDraft draft) {
+        Profile bound = draft == null ? null : draft.bound();
+        if (bound != null) {
+            String uuid = normalize(bound.playerUuid());
+            for (BaseAccount account : accounts) {
+                if (normalize(account.getAccountStorage().getPlayerUUID().toString()).equals(uuid)) {
+                    return account;
+                }
+            }
+        }
+        return accounts.get(0);
+    }
+
+    /** UUID 的连字符与大小写在服务端 / 本地之间并不统一，比较前统一成小写无连字符。 */
+    private static String normalize(String uuid) {
+        return uuid == null ? "" : uuid.replace("-", "").toLowerCase(Locale.ROOT);
     }
 
     private void copyLink(DeviceCode code) {
@@ -515,15 +596,80 @@ public class ExternalLoginScreen extends LoginScreen {
         return this.oauthMode ? TOGGLE_W : INPUT_W - TOGGLE_W - PAD;
     }
 
+    /**
+     * 提示行的高度：正常贴在页头下沿，窗口被挤矮时抬到表单上方，避免压住第一个输入框。
+     */
+    private int hintY(int contentTop) {
+        return Math.max(24, Math.min(HINT_Y, contentTop - 12));
+    }
+
     /** 选中模式的外圈：必须先于控件绘制，否则会盖住按钮本身。 */
     private void drawModeFrame(GuiGraphicsExtractor context) {
         if (!this.oauthAvailable) {
             return;
         }
 
-        context.fill(this.modeX() - SelectionStyle.INSET_X, TOP - SelectionStyle.INSET_Y,
-                this.modeX() + this.modeWidth() + SelectionStyle.INSET_X, TOP + BTN_H + SelectionStyle.INSET_Y,
+        int top = this.contentTop(this.formStackHeight());
+        context.fill(this.modeX() - SelectionStyle.INSET_X, top - SelectionStyle.INSET_Y,
+                this.modeX() + this.modeWidth() + SelectionStyle.INSET_X, top + BTN_H + SelectionStyle.INSET_Y,
                 SelectionStyle.FRAME);
+    }
+
+    /**
+     * 选择态的头像：画在每个角色按钮的左侧。
+     *
+     * <p>按钮文字居中，左侧留白正好放头像；纹理只注册一次并按住皮肤缓存键复用，翻页重绘不重复注册。</p>
+     */
+    private void drawCandidateAvatars(GuiGraphicsExtractor context) {
+        List<Profile> list = this.candidates;
+        if (list == null || this.candidateAvatars.isEmpty()) {
+            return;
+        }
+        int capacity = this.rowCapacity();
+        int pages = this.pageCount();
+        int start = Math.min(this.candidatePage, pages - 1) * capacity;
+        int top = this.selectionRowsTop(capacity);
+        int x = this.contentX();
+        for (int i = 0; i < capacity; i++) {
+            int index = start + i;
+            if (index >= list.size()) {
+                return;
+            }
+            int[] pixels = this.avatarPixels(list.get(index));
+            if (pixels != null) {
+                this.drawAvatar(context, x + AVATAR_INSET, top + i * (BTN_H + PAD) + AVATAR_INSET, pixels);
+            }
+        }
+    }
+
+    /** 取头像像素网格；缓存里没有就返回 null，界面只画按钮文字。 */
+    private int[] avatarPixels(Profile profile) {
+        String key = this.candidateAvatars.get(profile.playerUuid());
+        if (key == null) {
+            return null;
+        }
+        int[] cached = this.avatarTextures.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        int[] pixels = AvatarPixels.decode(AvatarCache.load(key), AVATAR_SIZE);
+        if (pixels != null) {
+            this.avatarTextures.put(key, pixels);
+        }
+        return pixels;
+    }
+
+    /** 用矩形填充逐像素画头像：这套绘制调用是 1.20 / 1.21.x / 26.x 唯一一致的写法。 */
+    private void drawAvatar(GuiGraphicsExtractor context, int left, int top, int[] pixels) {
+        for (int y = 0; y < AVATAR_SIZE; y++) {
+            for (int x = 0; x < AVATAR_SIZE; x++) {
+                int argb = pixels[y * AVATAR_SIZE + x];
+                if ((argb >>> 24) == 0) {
+                    continue;
+                }
+                context.fill(left + x, top + y, left + x + 1, top + y + 1, argb);
+            }
+        }
     }
 
     @Override
@@ -536,7 +682,8 @@ public class ExternalLoginScreen extends LoginScreen {
         if (this.candidates != null) {
             // 选择态没有模式按钮和密码框，别画它们的外圈与遮蔽。
             super.extractRenderState(context, mouseX, mouseY, delta);
-            this.center(context, this.selectionHint(), 84, 0xFFE0E0E0);
+            this.drawCandidateAvatars(context);
+            this.center(context, this.selectionHint(), this.hintY(this.selectionRowsTop(this.rowCapacity())), 0xFFE0E0E0);
             this.drawStatus(context);
             return;
         }
@@ -547,7 +694,7 @@ public class ExternalLoginScreen extends LoginScreen {
         this.drawPasswordMask(context, this.passwordBox, this.passwordX, this.passwordY);
 
         if (this.oauthMode) {
-            this.center(context, this.oauthHint(), this.hintY, 0xFFE0E0E0);
+            this.center(context, this.oauthHint(), this.hintY(this.contentTop(this.formStackHeight())), 0xFFE0E0E0);
         }
 
         this.drawStatus(context);

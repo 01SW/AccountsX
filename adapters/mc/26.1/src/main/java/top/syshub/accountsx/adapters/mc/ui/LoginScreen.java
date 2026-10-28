@@ -71,20 +71,20 @@ abstract class LoginScreen extends Screen {
         return this.width / 2 - INPUT_W / 2;
     }
 
-    /** 登录成功：入库、让父界面的列表跟上，然后回到父界面。 */
+    /** 登录成功（单账号）：入库、让父界面的列表跟上、切换到它，然后回到父界面。 */
     protected final void finish(BaseAccount account) {
-        this.finish(java.util.List.of(account));
+        this.finish(java.util.List.of(account), account);
     }
 
     /**
-     * 登录成功（可能一次产出多个账号）：全部入库，只切换第一个。
+     * 登录成功（可能一次产出多个账号）：全部入库，只切换到 {@code switchTo}（为空则第一个）。
      *
      * <p>多角色账号里用户勾了几个就建几个，其余留给列表手动切换——每个都自动切一次没有意义，
      * 切账号会重连，回回都断线。切换放在 {@link #onClose()} 之后：界面已经没用了，
      * 而重连过程中留着它会挡住游戏画面。{@code onSwitched} 传空回调是因为
      * {@link AccountManager#selectAccount} 在「已是当前账号」的分支上也会直接调用它。</p>
      */
-    protected final void finish(java.util.List<? extends BaseAccount> accounts) {
+    protected final void finish(java.util.List<? extends BaseAccount> accounts, BaseAccount switchTo) {
         if (accounts.isEmpty()) {
             return;
         }
@@ -95,15 +95,21 @@ abstract class LoginScreen extends Screen {
         if (parentScreen instanceof AccountScreen accountScreen) {
             accountScreen.syncAccounts();
         }
-        BaseAccount first = accounts.get(0);
+        BaseAccount target = switchTo != null && accounts.contains(switchTo) ? switchTo : accounts.get(0);
         this.onClose();
-        AccountManager.selectAccount(first, () -> {
+        AccountManager.selectAccount(target, () -> {
         });
     }
 
+    /**
+     * 失败提示。
+     *
+     * <p>{@code detail} 只放服务端自己写的说明（见 {@code YggdrasilPasswordFlow#throwIfError}）或异常类型名，
+     * 内部类名、HTTP 细节这类东西对用户没有操作价值，只会把「密码错了」淹掉。</p>
+     */
     protected static Component failText(Exception e) {
         String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-        return Component.translatable("accountsx.account.server.fail", detail);
+        return Component.translatable("accountsx.account.login.fail", detail);
     }
 
     /** 页头：压暗背景 + 标题 + 副标题（服务器名 / 账号类型）。 */
@@ -113,12 +119,56 @@ abstract class LoginScreen extends Screen {
         this.center(context, this.subtitle, 56, 0xFFA0A0A0);
     }
 
-    /** 状态行：失败原因、「正在操作」等。 */
+    /**
+     * 状态行的基线：紧贴「返回」按钮上方预留一行。
+     *
+     * <p>早期版本把它画在 {@code height - PAD - BTN_H - 16}，窗口不拖到最大时这一行会压住按钮文字；
+     * 现在它有自己的保留行，控件也以 {@link #limitY()} 为底边上限，两者互不侵犯。</p>
+     */
+    protected final int statusY() {
+        return this.height - PAD - BTN_H - PAD - this.font.lineHeight;
+    }
+
+    /** 控件区的底边上限：页面控件不许越过状态行。 */
+    protected final int limitY() {
+        return statusY() - PAD;
+    }
+
+    /**
+     * 状态行：失败原因、「正在操作」等。过长时按窗口宽度折行并向上叠放。
+     *
+     * <p>文案里的服务端说明是一整句任意长度的文本，居中画一行会顶到屏幕两侧；向上叠放而不是向下，
+     * 是因为下方紧接着就是「返回」按钮。</p>
+     */
     protected final void drawStatus(GuiGraphicsExtractor context) {
         Component text = this.status;
-        if (text != null) {
-            this.center(context, text, this.height - PAD - BTN_H - 16, 0xFFA0A0A0);
+        if (text == null) {
+            return;
         }
+        java.util.List<String> lines = this.wrapLines(text.getString(), Math.max(INPUT_W, this.width - PAD * 8));
+        int y = this.statusY() - (lines.size() - 1) * this.font.lineHeight;
+        for (String line : lines) {
+            this.center(context, Component.literal(line), y, 0xFFA0A0A0);
+            y += this.font.lineHeight;
+        }
+    }
+
+    /** 按像素宽度逐字折行（中英混排没有空格可依赖，只能量宽度）。 */
+    private java.util.List<String> wrapLines(String text, int maxWidth) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (line.length() > 0 && this.font.width(line.toString() + c) > maxWidth) {
+                lines.add(line.toString());
+                line.setLength(0);
+            }
+            line.append(c);
+        }
+        if (line.length() > 0) {
+            lines.add(line.toString());
+        }
+        return lines;
     }
 
     protected final void center(GuiGraphicsExtractor context, Component text, int y, int color) {

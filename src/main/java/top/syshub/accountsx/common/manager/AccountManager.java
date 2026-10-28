@@ -5,6 +5,7 @@ import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.model.AccountState;
 import top.syshub.accountsx.common.accounts.model.AccountType;
+import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorProfileKeys;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.adapters.Platforms;
@@ -64,6 +65,23 @@ public final class AccountManager {
     /** 账号是否属于某个外置认证服务器（UI 筛选与「删服务器连带删账号」共用同一判定）。 */
     public static boolean isOnServer(BaseAccount account, String apiRoot) {
         return AccountRepository.isOnServer(account, apiRoot);
+    }
+
+    /**
+     * 账号在界面上该显示的来源名称：外置账号返回认证服务器名，其余类型返回 {@code null}。
+     *
+     * <p>外置账号的价值在于「在哪个服务器上」，类型名对所有外置账号都一样、没有信息量；
+     * 其余类型（微软 / 离线 / 环境）的来源就是类型本身，所以交给调用方回落。</p>
+     */
+    public static String serverDisplayName(BaseAccount account) {
+        if (account == null || account.getAccountType() != AccountType.AUTHLIB_INJECTOR) {
+            return null;
+        }
+        if (!(account instanceof AbstractInjectorAccount injector)) {
+            return null;
+        }
+        AuthServer server = repository().authServers().byApiRoot(injector.getServer());
+        return server == null ? null : server.displayName();
     }
 
     public static void initialize() {
@@ -211,7 +229,10 @@ public final class AccountManager {
         AccountContext context = AccountProvider.getProvider(account).createAccountContext(account);
 
         // 必须在构建会话之前同步：mixin 在会话内随时可能被调用，晚一步就会继续伪造档案密钥对。
-        InjectorProfileKeys.setSupported(context.server().profileKeySupported());
+        // 离线 / 环境账号没有上下文（provider 返回 null），切过去时必须把标志复位——否则上一个外置
+        // 账号留下的 true 会被当成「当前会话也支持」，让下一次伪造行为与实际服务器不符。
+        InjectorProfileKeys.setSupported(
+                context != null && context.server() != null && context.server().profileKeySupported());
 
         return Platforms.authlibBridge().createAccountProfile(
                 account.getAccountStorage(),
