@@ -304,6 +304,17 @@ public final class AccountManager {
                 AccountsX.LOGGER.error("Cannot refresh the account.", e);
                 return;
             }
+        } catch (RuntimeException e) {
+            // 服务端返回畸形 JSON（例如缺 accessToken 的 500 响应）会以未检查异常冒出来。
+            // 状态机只认 IOException 分支，若不在这里归位，账号会永远停在 AUTHORIZING
+            // （界面显示「登录中」，用户既点不动也删不掉，只能重启）。
+            markUnauthorizedUnlessAlreadyAuthorized(account);
+            if (thrown) {
+                throw e;
+            } else {
+                AccountsX.LOGGER.error("Cannot refresh the account (unexpected error).", e);
+                return;
+            }
         }
 
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
