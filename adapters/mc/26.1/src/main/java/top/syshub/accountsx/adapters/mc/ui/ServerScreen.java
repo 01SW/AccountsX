@@ -1,5 +1,6 @@
 package top.syshub.accountsx.adapters.mc.ui;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.EditBox;
@@ -33,9 +34,12 @@ public class ServerScreen extends Screen {
     }
 
     public void onClose() {
-        assert this.minecraft != null;
+        Minecraft minecraft = this.minecraft;
+        if (minecraft == null) {
+            return;
+        }
 
-        this.minecraft.setScreenAndShow(this.parent);
+        minecraft.setScreenAndShow(this.parent);
     }
 
     @Override
@@ -117,9 +121,9 @@ public class ServerScreen extends Screen {
         context.fill(0, 0, this.width, this.height, 0x99000000);
         super.extractRenderState(context, mouseX, mouseY, delta);
 
-        context.centeredText(this.font, this.title, this.width / 2, this.height / 2 - 60, 0xFFFFFF);
+        context.centeredText(this.font, this.title, this.width / 2, this.height / 2 - 60, 0xFFFFFFFF);
         if (this.status != null) {
-            context.centeredText(this.font, this.status, this.width / 2, this.height / 2 + 10, 0xA0A0A0);
+            context.centeredText(this.font, this.status, this.width / 2, this.height / 2 + 10, 0xFFA0A0A0);
         }
     }
 }
