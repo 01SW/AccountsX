@@ -1,5 +1,6 @@
 package top.syshub.accountsx.common.auth;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.security.SecureRandom;
@@ -51,6 +52,49 @@ public final class YggdrasilPasswordFlow {
         return fallback;
     }
 
+    /**
+     * 统一把服务端的 Yggdrasil 错误响应转成 {@link InjectorAuthException}。
+     * 注意只暴露服务端返回的 error / errorMessage，绝不带上任何令牌。
+     *
+     * <p>对 {@code "error"} 做类型判断而非直接 {@code getAsString()}：不规范的服务端可能把它写成
+     * {@code null} 或对象，此时 {@code getAsString()} 会抛 {@link UnsupportedOperationException}，
+     * 让本可操作的提示退化成「未知错误」并丢掉错误本身。</p>
+     *
+     * <p>i18n key 按调用场景区分：登录失败多半是用户名/密码写错（此时还没有账号可删），
+     * 而刷新失败才是「凭据已失效」——沿用同一条提示会给出错误的操作建议。</p>
+     */
+    private static void throwIfError(JsonObject json, String translationKey) throws InjectorAuthException {
+        JsonElement error = json.get("error");
+        if (error == null || error.isJsonNull()) {
+            return;
+        }
+
+        JsonElement errorMessage = json.get("errorMessage");
+        String detail = errorMessage != null && errorMessage.isJsonPrimitive() ? errorMessage.getAsString() : "";
+        throw new InjectorAuthException(
+                translationKey,
+                "Cannot auth this injector: " + error + (detail.isEmpty() ? "" : " - " + detail)
+        );
+    }
+
+    /**
+     * 取响应里的 accessToken；缺失或类型不对时抛 {@link IOException} 而不是 NPE。
+     *
+     * <p>认证请求是忽略 HTTP 状态码发出的（否则读不到 403 的错误体），因此任何非 2xx 响应都可能
+     * 流到这里。drasl 的 500 响应是 {@code {"path":…,"errorMessage":"internal server error"}} ——
+     * 没有 {@code error} 字段，{@link #throwIfError} 会放行；若此时直接取值，抛出的未检查异常会
+     * 绕过 {@code AccountManager.refreshAccount} 的 IOException 分支，账号永远停在「登录中」。</p>
+     */
+    private static String requireAccessToken(JsonObject json) throws IOException {
+        JsonElement accessToken = json.get("accessToken");
+        if (accessToken == null || !accessToken.isJsonPrimitive() || !accessToken.getAsJsonPrimitive().isString()) {
+            // 只报告字段名，绝不把响应体拼进消息：该消息会进日志，而某些 Yggdrasil 实现的错误体
+            // 会回显 accessToken/clientToken，等于把凭据写进日志（违反 AGENTS.md 的安全约束）。
+            throw new IOException("Yggdrasil response does not contain a string accessToken; fields=" + json.keySet());
+        }
+        return accessToken.getAsString();
+    }
+
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public static YggdrasilAuthResult login(HttpGateway http, AuthServer server, String username,
             String password, String wantedPlayer) throws IOException {
@@ -73,10 +117,12 @@ public final class YggdrasilPasswordFlow {
         root.addProperty("password", password);
         root.addProperty("clientToken", clientToken);
 
-        JsonObject json = http.postJson(loginUrl, root);
-        if (json.has("error"))
-            throw new IOException("Cannot auth this injector: " + json.get("errorMessage").getAsString());
-        String accessToken = json.get("accessToken").getAsString();
+        // ignoreHttpStatus=true：Yggdrasil 的认证失败是标准 JSON 错误体（drasl 一律 403 + error/errorMessage），
+        // 若先被网关的状态码校验拦下，就只剩 "HTTP 403"，用户看不到真正原因（也丢了 i18n 提示）。
+        JsonObject json = http.postJson(loginUrl, root, true);
+        throwIfError(json, "accountsx.account.fail.injector_login");
+
+        String accessToken = requireAccessToken(json);
         clientToken = echoedClientToken(json, clientToken);
         List<YggdrasilProfiles.Profile> profiles = YggdrasilProfiles.readProfiles(json);
 
@@ -125,10 +171,11 @@ public final class YggdrasilPasswordFlow {
         root.addProperty("accessToken", account.getLoginToken());
         root.addProperty("clientToken", clientToken);
 
-        JsonObject json = http.postJson(refreshUrl, root);
-        if (json.has("error"))
-            throw new IOException("Cannot auth this injector: " + json.get("errorMessage").getAsString());
-        String accessToken = json.get("accessToken").getAsString();
+        // 同上：必须读得到 403 的错误体，才能把「凭据已失效」这类可操作原因告诉用户。
+        JsonObject json = http.postJson(refreshUrl, root, true);
+        throwIfError(json, "accountsx.account.fail.injector_invalid_token");
+
+        String accessToken = requireAccessToken(json);
         String echoed = echoedClientToken(json, clientToken);
         if (!echoed.equals(clientToken)) {
             account.setClientToken(echoed);
