@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -15,6 +15,8 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import top.syshub.accountsx.common.auth.server.AuthServer;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
 
 /**
  * 认证失败必须给出可操作提示，而不是「HTTP 403」或 NPE。

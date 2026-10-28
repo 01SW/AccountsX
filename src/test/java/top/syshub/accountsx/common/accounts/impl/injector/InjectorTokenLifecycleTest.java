@@ -6,11 +6,11 @@ import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
-import top.syshub.accountsx.common.auth.AccountOAuth;
-import top.syshub.accountsx.common.auth.AuthServer;
-import top.syshub.accountsx.common.auth.AuthServerKind;
-import top.syshub.accountsx.common.auth.AuthServerRegistry;
-import top.syshub.accountsx.common.auth.OAuthEndpoints;
+import top.syshub.accountsx.common.auth.oauth.AccountOAuth;
+import top.syshub.accountsx.common.auth.server.AuthServer;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
+import top.syshub.accountsx.common.auth.server.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
 

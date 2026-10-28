@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;

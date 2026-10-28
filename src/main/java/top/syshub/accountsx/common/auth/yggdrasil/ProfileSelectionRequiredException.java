@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import java.io.IOException;
 import java.util.List;

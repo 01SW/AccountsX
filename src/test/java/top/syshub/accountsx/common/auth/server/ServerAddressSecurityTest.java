@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import org.junit.jupiter.api.Test;
 

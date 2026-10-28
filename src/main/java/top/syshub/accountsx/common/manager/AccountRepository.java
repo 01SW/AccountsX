@@ -15,10 +15,10 @@ import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 
 import top.syshub.accountsx.common.adapters.Platforms;
-import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.server.AuthServerRegistry;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
-import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
+import top.syshub.accountsx.common.auth.yggdrasil.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.storage.ConfigRoot;
 import top.syshub.accountsx.common.storage.ConfigStore;
 import top.syshub.accountsx.common.task.TaskScheduler;

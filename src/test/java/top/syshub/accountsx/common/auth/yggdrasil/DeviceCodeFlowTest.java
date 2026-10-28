@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -27,6 +27,11 @@ import top.syshub.accountsx.common.task.TaskScheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import top.syshub.accountsx.common.auth.server.AuthServer;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
+import top.syshub.accountsx.common.auth.server.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.oauth.AccountOAuth;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
 
 /**
  * 两步式 device-code（P5 外置登录界面所用 API）：取码与轮询分离，取消可打断。

@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 /** 服务器 kind；v4 字符串与 servers[].type / accounts[].type 共用（见 08 schema）。 */
 public enum AuthServerKind {

@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 /**
  * 两种 injector 登录/刷新流程的统一产物（P3.1）。avatar 字段为 null/0 表示未取到（可重建，不阻塞）；

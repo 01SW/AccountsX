@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.net.HttpGateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
+import top.syshub.accountsx.common.auth.yggdrasil.YggdrasilDeviceCodeFlow;
+import top.syshub.accountsx.common.auth.YggdrasilFixtures;
 
 /**
  * 探针取 client_id 的顺序：内置 apiRoot 表 → YGGC openid 配置里的 shared_client_id → 视为不支持 OAuth。
@@ -146,9 +149,9 @@ class YggdrasilServerProbeTest {
 
     @Test
     void apiRootKeyIsNormalized() {
-        assertThat(OAuthClientIds.key("HTTPS://Skin.JSUMC.fun/api/yggdrasil/"))
+        assertThat(ApiRootKey.of("HTTPS://Skin.JSUMC.fun/api/yggdrasil/"))
                 .isEqualTo("https://skin.jsumc.fun/api/yggdrasil");
-        assertThat(OAuthClientIds.key("https://skin.jsumc.fun:443/api/yggdrasil"))
+        assertThat(ApiRootKey.of("https://skin.jsumc.fun:443/api/yggdrasil"))
                 .isEqualTo("https://skin.jsumc.fun:443/api/yggdrasil");
     }
 

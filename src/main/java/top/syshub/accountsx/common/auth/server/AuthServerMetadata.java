@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import java.security.PublicKey;
 import java.util.List;

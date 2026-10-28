@@ -10,7 +10,7 @@ import top.syshub.accountsx.common.accounts.impl.injector.InjectorProfileKeys;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
-import top.syshub.accountsx.common.auth.AuthServer;
+import top.syshub.accountsx.common.auth.server.AuthServer;
 import top.syshub.accountsx.common.storage.ConfigStore;
 import top.syshub.accountsx.common.storage.JsonConfigStore;
 import top.syshub.accountsx.common.storage.migration.StandardMigrations;
@@ -58,7 +58,7 @@ public final class AccountManager {
         return repository().getCurrent();
     }
 
-    public static top.syshub.accountsx.common.auth.AuthServerRegistry authServers() {
+    public static top.syshub.accountsx.common.auth.server.AuthServerRegistry authServers() {
         return repository().authServers();
     }
 

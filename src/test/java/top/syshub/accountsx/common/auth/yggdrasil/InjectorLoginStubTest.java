@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -22,12 +22,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
-import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.server.AuthServerRegistry;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
 import top.syshub.accountsx.common.task.TaskScheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import top.syshub.accountsx.common.auth.server.AuthServer;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
+import top.syshub.accountsx.common.auth.oauth.AccountOAuth;
+import top.syshub.accountsx.common.auth.YggdrasilFixtures;
 
 /**
  * P3.1 端到端（05 文档 1.4b 最简 Yggdrasil stub）：密码登录 / device-code 登录 / OAuth 刷新

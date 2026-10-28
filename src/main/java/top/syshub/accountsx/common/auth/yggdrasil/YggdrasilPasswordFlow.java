@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -11,10 +11,11 @@ import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
-import top.syshub.accountsx.common.auth.YggdrasilProfiles.Profile;
+import top.syshub.accountsx.common.auth.yggdrasil.YggdrasilProfiles.Profile;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.AvatarService;
 import top.syshub.accountsx.common.utils.Threading;
+import top.syshub.accountsx.common.auth.server.AuthServer;
 
 /**
  * Yggdrasil 用户名/密码流程（P3.1：从 {@code AbstractInjectorAccountProvider} 拆出）。

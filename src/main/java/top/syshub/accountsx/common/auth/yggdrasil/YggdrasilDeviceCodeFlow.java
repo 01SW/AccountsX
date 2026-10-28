@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.yggdrasil;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -11,6 +11,9 @@ import java.util.function.BooleanSupplier;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.AvatarService;
 import top.syshub.accountsx.common.utils.Threading;
+import top.syshub.accountsx.common.auth.server.AuthServer;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
+import top.syshub.accountsx.common.auth.oauth.IdTokenVerifier;
 
 /**
  * Yggdrasil device-code（OAuth）流程（P3.1：从 {@code AbstractInjectorAccountProvider} 拆出）。

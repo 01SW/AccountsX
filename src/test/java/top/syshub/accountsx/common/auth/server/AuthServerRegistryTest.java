@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -15,6 +15,8 @@ import top.syshub.accountsx.common.net.HttpGateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
+import top.syshub.accountsx.common.auth.YggdrasilFixtures;
 
 /**
  * P3.1 注册表：探测去重（同服务器多账号只探测一次）、元数据内存缓存、

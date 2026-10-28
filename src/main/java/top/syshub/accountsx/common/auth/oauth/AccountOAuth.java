@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.oauth;
 
 import com.google.gson.JsonObject;
 

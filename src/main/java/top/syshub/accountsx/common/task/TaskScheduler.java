@@ -4,7 +4,7 @@ import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
-import top.syshub.accountsx.common.auth.ProfileSelectionRequiredException;
+import top.syshub.accountsx.common.auth.yggdrasil.ProfileSelectionRequiredException;
 import top.syshub.accountsx.common.adapters.Platforms;
 
 import java.util.ArrayList;

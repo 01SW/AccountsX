@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.oauth;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import top.syshub.accountsx.common.net.HttpGateway;
+import top.syshub.accountsx.common.auth.server.AuthServer;
 
 /**
  * id_token（OIDC JWT）校验：签名 + {@code iss} / {@code aud} / {@code iat} / {@code exp}。

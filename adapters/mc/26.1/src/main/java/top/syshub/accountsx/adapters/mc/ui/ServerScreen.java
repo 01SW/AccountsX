@@ -6,8 +6,8 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import top.syshub.accountsx.common.auth.AuthServerKind;
-import top.syshub.accountsx.common.auth.ServerAddressSecurity;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
+import top.syshub.accountsx.common.auth.server.ServerAddressSecurity;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
 

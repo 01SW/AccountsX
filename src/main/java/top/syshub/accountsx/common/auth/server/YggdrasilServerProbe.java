@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.NetworkUtils;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
 
 public final class YggdrasilServerProbe {
     private YggdrasilServerProbe() {
@@ -138,7 +139,7 @@ public final class YggdrasilServerProbe {
         // clientId 只有两个来源：内置 apiRoot 表 > YGGC（Yggdrasil Connect）openid 配置里的 shared_client_id。
         // 表的键就是 apiRoot 本身，不是主机名：client_id 按 API 根注册，同一域名可以有不同 API 根，
         // 也不能用 ALI 解析过程中的中间域名（解析可能 301 跨域）。两处都取不到就判定该服务器不支持 OAuth。
-        String clientId = knownClientIds == null ? null : knownClientIds.get(OAuthClientIds.key(apiRoot));
+        String clientId = knownClientIds == null ? null : knownClientIds.get(ApiRootKey.of(apiRoot));
         JsonObject config = http.get(openidUrl);
         // 设备码登录申请的 scope 固定带 openid 与 Yggdrasil.PlayerProfiles.Select；服务器若明确
         // 声明了 scopes_supported 却不含它们，令牌请求只会拿回 invalid_scope。宁可不出设备码入口

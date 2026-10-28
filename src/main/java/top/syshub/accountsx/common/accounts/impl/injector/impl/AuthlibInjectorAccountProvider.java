@@ -3,7 +3,7 @@ package top.syshub.accountsx.common.accounts.impl.injector.impl;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
 import top.syshub.accountsx.common.accounts.model.AccountType;
-import top.syshub.accountsx.common.auth.AuthServerKind;
+import top.syshub.accountsx.common.auth.server.AuthServerKind;
 import top.syshub.accountsx.common.net.HttpGateway;
 
 import java.util.UUID;

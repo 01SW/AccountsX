@@ -1,4 +1,4 @@
-package top.syshub.accountsx.common.auth;
+package top.syshub.accountsx.common.auth.server;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.Threading;
+import top.syshub.accountsx.common.auth.oauth.OAuthClientIds;
+import top.syshub.accountsx.common.auth.oauth.OAuthEndpoints;
 
 /**
  * 认证服务器注册表：servers 条目的内存视图 + 元数据缓存。
@@ -142,9 +144,9 @@ public final class AuthServerRegistry {
         return Objects.toString(type, "") + "|" + Objects.toString(apiRoot, "");
     }
 
-    /** 加服（UI）：clientId 默认取内置 host 表。 */
+    /** 加服（UI）：clientId 默认取内置 apiRoot 表。 */
     public AuthServer add(AuthServerKind kind, String locator) throws IOException {
-        return add(kind, locator, OAuthClientIds.defaults());
+        return add(kind, locator, OAuthClientIds.BY_API_ROOT);
     }
 
     /**
@@ -179,9 +181,9 @@ public final class AuthServerRegistry {
         return stored;
     }
 
-    /** 启动预热：clientId 默认取内置 host 表。 */
+    /** 启动预热：clientId 默认取内置 apiRoot 表。 */
     public void refreshAll() {
-        refreshAll(OAuthClientIds.defaults());
+        refreshAll(OAuthClientIds.BY_API_ROOT);
     }
 
     /** 启动预热：逐个探测 injector 条目；失败保留旧条目（stale），不阻塞。 */
