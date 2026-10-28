@@ -46,6 +46,17 @@ Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Conne
 
 > ⚠️ 配置文件包含明文 token，请勿分享或提交到版本控制。
 
+## 提交 OAuth Client ID
+
+OAuth Client ID 常量位于 `https://github.com/Dainsleif233/AccountsX/blob/dev/src/main/java/top/syshub/accountsx/common/auth/oauth/OAuthClientIds.java` 的 `BY_API_ROOT`：
+
+| 项 | 取值                     |
+|----|--------------------------|
+| 键 | 完整 API 根地址          |
+| 值 | 服务器注册的 `client_id` |
+
+探测顺序：常量表 → `shared_client_id` → 视为不支持 OAuth。
+
 ## 许可
 
 [GPL-3.0](LICENSE)
