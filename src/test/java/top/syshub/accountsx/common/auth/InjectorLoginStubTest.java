@@ -217,6 +217,10 @@ class InjectorLoginStubTest {
         assertThat(account.getLoginToken()).startsWith(AccountOAuth.PREFIX);
         assertThat(account.getLoginToken()).contains("fake-refresh2");
         assertThat(account.getAccountStorage().getPlayerName()).isEqualTo("Alex");
+        // P1：token 响应的 expires_in=3600 要变成启动复用判据（60 秒安全余量内为正）
+        assertThat(account.getAccountStorage().getExpiresAt())
+                .isPositive()
+                .isLessThan(System.currentTimeMillis() + 3_600_000L);
         assertThat(count("POST /api/yggdrasil/oauth/device")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/oauth/token")).isEqualTo(1);
         // 端点来自注册表条目：openid 配置只在加服探测时取过一次
@@ -239,5 +243,9 @@ class InjectorLoginStubTest {
         assertThat(account.getLoginToken()).startsWith(AccountOAuth.PREFIX);
         assertThat(account.getLoginToken()).contains("fake-refresh2");
         assertThat(count("POST /api/yggdrasil/oauth/token")).isEqualTo(1);
+        // P1：刷新轮换后的新令牌同样要带上 expires_at，否则下次启动仍会全量轮换
+        assertThat(account.getAccountStorage().getExpiresAt())
+                .isPositive()
+                .isLessThan(System.currentTimeMillis() + 3_600_000L);
     }
 }

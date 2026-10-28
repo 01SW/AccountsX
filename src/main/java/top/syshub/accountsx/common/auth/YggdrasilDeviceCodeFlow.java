@@ -46,6 +46,9 @@ public final class YggdrasilDeviceCodeFlow {
     private static final String SCOPE =
             "openid offline_access Yggdrasil.PlayerProfiles.Select Yggdrasil.Server.Join";
 
+    /** 过期时刻的安全余量（毫秒）：与微软侧一致，提前 60 秒视为过期，边界上宁可多刷一次。 */
+    private static final long EXPIRY_SKEW_MILLIS = 60_000L;
+
     private YggdrasilDeviceCodeFlow() {
     }
 
@@ -88,6 +91,7 @@ public final class YggdrasilDeviceCodeFlow {
         long stepMillis = Math.max(code.interval(), 1) * 1000L;
         long deadline = System.nanoTime() + Math.max(code.expiresIn(), 1) * 1_000_000_000L;
         String accessToken = null, refreshToken = null, idToken = null;
+        JsonObject tokenResponse = null;
 
         while (System.nanoTime() < deadline) {
             sleep.sleep(stepMillis);
@@ -107,6 +111,7 @@ public final class YggdrasilDeviceCodeFlow {
                 accessToken = requireString(token, "access_token");
                 refreshToken = requireString(token, "refresh_token");
                 idToken = requireString(token, "id_token");
+                tokenResponse = token;
                 break;
             }
 
@@ -125,7 +130,7 @@ public final class YggdrasilDeviceCodeFlow {
         if (accessToken == null)
             throw new IOException("Timed out waiting for authorization.");
 
-        return toResult(http, server, accessToken, refreshToken, idToken,
+        return toResult(http, server, tokenResponse, accessToken, refreshToken, idToken,
                 code.tokenEndpoint(), code.clientId());
     }
 
@@ -146,6 +151,25 @@ public final class YggdrasilDeviceCodeFlow {
                 remaining -= slice;
             }
         };
+    }
+
+    /**
+     * 用 userinfo 端点确认 OAuth 访问令牌仍有效（issue 268：授权服务器回 401 即无效）。
+     *
+     * <p>OIDC 访问令牌不是 Yggdrasil 会话令牌，/authserver/validate 不认识它；
+     * userinfo 端点就是规范规定的令牌校验入口（GET + Bearer）。端点未知（老探测缓存、
+     * 或服务器尚未重新探测）时保守返回无效——让账号走一次刷新，刷新会给出更可读的错误；
+     * 请求失败（含 401）则以 {@link IOException} 抛出，由调用方的统一兜底记日志并判定不可复用。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public static boolean validateAccessToken(HttpGateway http, AuthServer server, String accessToken)
+            throws IOException {
+        OAuthEndpoints oauth = server.oauth();
+        String userinfo = oauth == null ? null : oauth.userinfoEndpoint();
+        if (userinfo == null || userinfo.isBlank())
+            return false;
+        http.get(userinfo, Map.of("Authorization", "Bearer " + accessToken));
+        return true;
     }
 
     /** OAuth 刷新（信封 JSON 即 loginToken 去掉前缀的部分）。 */
@@ -173,13 +197,13 @@ public final class YggdrasilDeviceCodeFlow {
         // 不返回就沿用信封里的旧值，否则一次成功刷新会把账号变成再也刷不动的死账号。
         String rotated = optionalString(token, "refresh_token");
 
-        return toResult(http, server, accessToken, rotated != null ? rotated : refreshToken, idToken,
+        return toResult(http, server, token, accessToken, rotated != null ? rotated : refreshToken, idToken,
                 tokenEndpoint, clientId);
     }
 
-    /** token 响应 → 账号数据：id_token 给身份（先验签与声明），sessionserver 给头像。 */
-    private static YggdrasilAuthResult toResult(HttpGateway http, AuthServer server, String accessToken,
-            String refreshToken, String idToken, String tokenEndpoint, String clientId) throws IOException {
+    /** token 响应 → 账号数据：id_token 给身份（先验签与声明），sessionserver 给头像，expires_in 给过期时刻。 */
+    private static YggdrasilAuthResult toResult(HttpGateway http, AuthServer server, JsonObject token,
+            String accessToken, String refreshToken, String idToken, String tokenEndpoint, String clientId) throws IOException {
         YggdrasilProfiles.Profile profile = readIdTokenProfile(http, server, idToken);
         AvatarService.AvatarKey avatar = AvatarService.fetch(http,
                 server.apiRoot() + "/sessionserver/session/minecraft/profile/", profile.playerUuid());
@@ -187,7 +211,21 @@ public final class YggdrasilDeviceCodeFlow {
                 refreshToken, tokenEndpoint, clientId,
                 // OAuth 账号走 OAuth 刷新端点，不使用 Yggdrasil clientToken。
                 null,
-                avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+                avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt(),
+                expiresAtOf(token));
+    }
+
+    /**
+     * token 响应的 {@code expires_in}（OIDC 必具）→ 过期时刻（epoch 毫秒）。
+     * 缺失或类型不对按未知（0）处理：显式的非正数已被 {@code validateTokens} 拒掉，这里只兜解析之外的情形，
+     * 宁可下次启动多走一次 userinfo 校验，也不要把过期令牌当成可复用。
+     */
+    private static long expiresAtOf(JsonObject token) {
+        JsonElement expiresIn = token.get("expires_in");
+        if (!(expiresIn instanceof JsonPrimitive p) || !p.isNumber())
+            return 0L;
+        long seconds = p.getAsLong();
+        return seconds <= 0 ? 0L : System.currentTimeMillis() + seconds * 1000L - EXPIRY_SKEW_MILLIS;
     }
 
     /**

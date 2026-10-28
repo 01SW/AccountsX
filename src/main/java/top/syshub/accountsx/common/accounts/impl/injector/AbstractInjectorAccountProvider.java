@@ -175,7 +175,8 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                 throw new IOException("认证服务器不在列表中，无法刷新账号: " + account.getServer());
             YggdrasilAuthResult result = YggdrasilDeviceCodeFlow.refresh(http,
                     account.getLoginToken().substring(AccountOAuth.PREFIX.length()), server);
-            account.setProfile(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()));
+            account.setProfile(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()),
+                    result.expiresAt());
             account.setLoginProfile(AccountOAuth.envelope(result.refreshToken(), result.tokenEndpoint(), result.clientId()),
                     result.playerUuid());
             account.setAvatar(result.avatarKey(), result.avatarCachedAt());
@@ -189,14 +190,20 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
      * 而账号 state 是 transient 的、每次启动都按未授权处理，无条件刷新等于每启动一次换一次令牌，
      * 同账号在别的客户端/实例上就立刻 401。
      *
-     * <p>device-code 账号一样适用：validate 用的是 storage 里的 accessToken；loginToken 里放的是
-     * OAuth 信封，不能拿去问服务器。</p>
+     * <p>两类令牌各问各的端点：会话令牌走 {@code /authserver/validate}；OAuth 信封账号的访问令牌
+     * 是 OIDC 令牌，validate 不认识它，按 issue 268 改问 userinfo（401 即无效）。过期时刻已知且
+     * 仍新鲜时（OAuth 令牌才有的 expires_in）直接复用，连校验请求都不发。</p>
      */
     @Override
     public boolean canReuseToken(T account) throws IOException {
         String accessToken = account.getAccountStorage().getAccessToken();
         if (accessToken == null || accessToken.isEmpty())
             return false;
+        long expiresAt = account.getAccountStorage().getExpiresAt();
+        if (expiresAt > 0 && System.currentTimeMillis() < expiresAt)
+            return true;
+        if (AccountOAuth.isEnvelope(account.getLoginToken()))
+            return YggdrasilDeviceCodeFlow.validateAccessToken(http, serverFor(account), accessToken);
         return YggdrasilPasswordFlow.validate(http, serverFor(account), accessToken, account.getClientToken());
     }
 
@@ -235,6 +242,9 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     private T toAccount(AuthServer server, YggdrasilAuthResult result) {
         T account = createAccount(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()),
                 server.apiRoot(), result.playerUuid(), server.displayName(), result.avatarKey(), result.avatarCachedAt());
+        // OAuth 令牌自带 expires_in（会话令牌为 0=未知）：记下来，下次启动未过期就免 userinfo 校验。
+        if (result.expiresAt() > 0)
+            account.setTokenExpiry(result.expiresAt());
         if (result.clientToken() != null)
             account.setClientToken(result.clientToken());
         if (result.refreshToken() != null)

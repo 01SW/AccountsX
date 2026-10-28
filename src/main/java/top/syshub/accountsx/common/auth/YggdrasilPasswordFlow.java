@@ -257,7 +257,9 @@ public final class YggdrasilPasswordFlow {
         String profileUrl = server.apiRoot() + "/sessionserver/session/minecraft/profile/";
         AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUuid());
         return new YggdrasilAuthResult(accessToken, profile.playerName(), profile.playerUuid(),
-                null, null, null, clientToken, avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+                null, null, null, clientToken, avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt(),
+                // 会话令牌没有 expires_in；有效性靠 /authserver/validate 确认。
+                0L);
     }
 
     /** 密码流刷新：沿用旧语义——token 轮换写回 loginToken，多 profile 时按 preferred 匹配并刷头像。 */

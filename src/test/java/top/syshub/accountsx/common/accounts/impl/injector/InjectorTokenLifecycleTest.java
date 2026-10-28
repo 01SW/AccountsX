@@ -6,9 +6,11 @@ import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
+import top.syshub.accountsx.common.auth.AccountOAuth;
 import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.auth.OAuthEndpoints;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.net.JdkHttpGateway;
 
@@ -20,6 +22,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 令牌生命周期：启动复用（B4）与删除撤销（B13）。
@@ -43,9 +46,15 @@ class InjectorTokenLifecycleTest {
             throw new UnsupportedOperationException("fake: get not expected");
         }
 
+        /** userinfo 校验（OAuth 信封账号）的答案：null → 401（无效），否则 200 响应。 */
+        private JsonObject getResponse;
+
         @Override
-        public JsonObject get(String url, Map<String, String> headers) {
-            throw new UnsupportedOperationException("fake: get(headers) not expected");
+        public JsonObject get(String url, Map<String, String> headers) throws IOException {
+            this.urls.add(url);
+            if (this.getResponse == null)
+                throw new IOException("HTTP 401");
+            return this.getResponse;
         }
 
         @Override
@@ -161,6 +170,74 @@ class InjectorTokenLifecycleTest {
     @Test
     void signOut_withoutToken_skipsNetwork() {
         this.provider.signOut(account(null));
+        assertThat(this.gateway.urls).isEmpty();
+    }
+
+    /** 带完整 OAuth 端点（含 userinfo）的注册表：信封账号的复用判定要走 userinfo。 */
+    private void installRegistryWithUserinfo() {
+        AuthServerRegistry registry = new AuthServerRegistry(JdkHttpGateway.INSTANCE);
+        JsonArray servers = new JsonArray();
+        servers.add(new AuthServer(API_ROOT, AuthServerKind.YGGDRASIL, "FakeInjector",
+                new OAuthEndpoints("fake-client", API_ROOT + "/oauth/token", null,
+                        API_ROOT + "/oauth/userinfo", null, null), 0L).toJson());
+        registry.load(servers);
+        AbstractInjectorAccountProvider.installRegistry(registry);
+    }
+
+    private AuthlibInjectorAccountProvider.AuthlibInjectorAccount envelopeAccount() {
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = account("fake-access");
+        account.setLoginTokenForMigration(
+                AccountOAuth.envelope("fake-refresh", API_ROOT + "/oauth/token", "fake-client"),
+                "11111111-1111-1111-1111-111111111111");
+        return account;
+    }
+
+    @Test
+    void canReuseToken_envelope_userinfoSucceeds_isTrue() throws Exception {
+        installRegistryWithUserinfo();
+        this.gateway.getResponse = new JsonObject();
+
+        assertThat(this.provider.canReuseToken(envelopeAccount())).isTrue();
+
+        // OIDC 令牌必须问 userinfo（issue 268）；validate 不认识它，绝不能发。
+        assertThat(this.gateway.urls).containsExactly(API_ROOT + "/oauth/userinfo");
+    }
+
+    @Test
+    void canReuseToken_envelope_userinfoRejects_throws() {
+        installRegistryWithUserinfo();
+        // get() 的 getResponse 为 null → 401：无效要能被上游感知（AccountManager 统一吞成 false）。
+        assertThatThrownBy(() -> this.provider.canReuseToken(envelopeAccount()))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("401");
+        assertThat(this.gateway.urls).containsExactly(API_ROOT + "/oauth/userinfo");
+    }
+
+    @Test
+    void canReuseToken_envelope_withoutUserinfoEndpoint_isFalse() throws Exception {
+        // 注册表条目没有 userinfo 端点（老探测缓存）：无处可问，保守判不可复用且零网络。
+        assertThat(this.provider.canReuseToken(envelopeAccount())).isFalse();
+        assertThat(this.gateway.urls).isEmpty();
+    }
+
+    @Test
+    void canReuseToken_envelope_freshExpiry_skipsNetwork() throws Exception {
+        installRegistryWithUserinfo();
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = envelopeAccount();
+        account.setTokenExpiryForLoad(System.currentTimeMillis() + 3_600_000L);
+
+        assertThat(this.provider.canReuseToken(account)).isTrue();
+        assertThat(this.gateway.urls).isEmpty();
+    }
+
+    @Test
+    void canReuseToken_sessionToken_freshExpiry_skipsNetwork() throws Exception {
+        // expiresAt 短路对会话账号同样成立（当前恒为 0，但语义上不该再发 validate）。
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = account("fake-access");
+        account.setClientTokenForMigration("fake-client-token");
+        account.setTokenExpiryForLoad(System.currentTimeMillis() + 3_600_000L);
+
+        assertThat(this.provider.canReuseToken(account)).isTrue();
         assertThat(this.gateway.urls).isEmpty();
     }
 }
