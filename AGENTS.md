@@ -134,7 +134,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
 6. 删除正在使用的账号：仓储把 current 指针落回默认账号（`ENV_DEFAULT`，即启动器会话），随后 Manager 在 worker 上登录它、在客户端线程上切回会话——与会话切换同一条链路；没有环境账号可回落时指针清空、游戏会话维持原样
 
-启动刷新先问 `AccountProvider.canReuseToken`：外置账号发 `/authserver/validate`（204 空体才算仍有效），微软账号按落盘的 `expiresAt` 判断；能复用就跳过 refresh，否则每次启动都会轮换令牌，把同一账号在别的实例里顶掉。`expiresAt` 未知（0）时一律按需刷新。
+启动刷新先问 `AccountProvider.canReuseToken`：`expiresAt` 在未来就直接复用（不发请求）；否则外置账号分两类——OAuth 信封账号（带 refresh_token 的设备码账号）按 OIDC 惯例 GET `userinfo` 端点（Bearer 头，端点未知时保守判不能复用），会话令牌账号发 `/authserver/validate`（204 空体才算仍有效）；微软账号按落盘的 `expiresAt` 判断。能复用就跳过 refresh，否则每次启动都会轮换令牌，把同一账号在别的实例里顶掉。`expiresAt` 未知（0）时一律按需刷新。
 
 删除账号、或删除账号所属的认证服务器时，Manager 在 worker 上逐个异步调用 `AccountProvider.signOut`：外置账号发 `/authserver/invalidate` 让服务端作废令牌，网络失败只记 debug 日志（账号已经删了，撤销失败不能把异常抛回删除链路）；微软没有单令牌撤销端点，实现为空。
 
@@ -154,6 +154,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - `ENV_DEFAULT` 账号不写入磁盘
 - 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
 - `servers` 由 `AuthServerRegistry`（`common/auth/`）接管：登录/刷新/建会话只读内存缓存（公钥、skinDomains、OIDC 端点），仅在启动预热与加服（用户在「添加认证服务器」里显式提交）时探测；登录路径直接用现有条目、不再解析 locator；探测失败保留 stale 条目不阻塞；`mojang` / `offline` 为固定条目（无 `apiRoot`），装载时自动补齐。
+- 探测 openid 配置时，若服务器发布了 `scopes_supported` 却不含 `openid` / `Yggdrasil.PlayerProfiles.Select`，就不记录 `deviceAuthorizationEndpoint`——设备码登录必然 `invalid_scope`，索性不给这个入口；密码登录不受影响。没发布该字段时不作判断。
 
 ### MC 适配器（`adapters/mc/<version>`）
 
