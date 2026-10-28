@@ -20,6 +20,11 @@ repositories {
             artifact()
         }
     }
+    maven("https://libraries.minecraft.net/") {
+        metadataSources {
+            artifact()
+        }
+    }
 }
 
 dependencies {
