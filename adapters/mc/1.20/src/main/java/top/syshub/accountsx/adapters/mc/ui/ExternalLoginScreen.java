@@ -10,6 +10,7 @@ import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccoun
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.auth.AuthServer;
+import top.syshub.accountsx.common.auth.ServerAddressSecurity;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.task.TaskScheduler;
@@ -295,6 +296,9 @@ public class ExternalLoginScreen extends LoginScreen {
     @Override
     public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         this.drawHeader(context);
+        if (ServerAddressSecurity.isPlaintext(this.server.apiRoot())) {
+            this.center(context, Component.translatable("accountsx.account.server.insecure"), 72, 0xFFFF5555);
+        }
         this.drawModeFrame(context);
         super.render(context, mouseX, mouseY, delta);
 

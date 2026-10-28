@@ -7,6 +7,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import top.syshub.accountsx.common.auth.AuthServerKind;
+import top.syshub.accountsx.common.auth.ServerAddressSecurity;
 import top.syshub.accountsx.common.manager.AccountManager;
 import top.syshub.accountsx.common.task.TaskScheduler;
 
@@ -111,6 +112,15 @@ public class ServerScreen extends Screen {
         });
     }
 
+    /**
+     * 输入的是明文 HTTP 地址。规范禁止把 HTTPS 降级到 HTTP，但用户显式写出的 http:// 不拦——只当场
+     * 警告，因为密码与令牌会明文过网。
+     */
+    private boolean insecureAddress() {
+        EditBox input = this.urlInput;
+        return input != null && ServerAddressSecurity.isPlaintext(input.getValue());
+    }
+
     private void addField(AbstractWidget drawable) {
         this.addRenderableOnly(drawable);
         this.addWidget(drawable);
@@ -122,6 +132,10 @@ public class ServerScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
 
         context.drawCenteredString(this.font, this.title, this.width / 2, this.height / 2 - 60, 0xFFFFFFFF);
+        if (this.insecureAddress()) {
+            context.drawCenteredString(this.font, Component.translatable("accountsx.account.server.insecure"),
+                    this.width / 2, this.height / 2 - 46, 0xFFFF5555);
+        }
         if (this.status != null) {
             context.drawCenteredString(this.font, this.status, this.width / 2, this.height / 2 + 26, 0xFFA0A0A0);
         }
