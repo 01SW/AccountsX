@@ -1,7 +1,8 @@
 package top.syshub.accountsx.common.task;
 
 import org.jspecify.annotations.NonNull;
-import top.syshub.accountsx.common.AccountsX;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
 import top.syshub.accountsx.common.accounts.model.PlayerNoLongerExistedException;
 import top.syshub.accountsx.common.adapters.Platforms;
@@ -45,6 +46,14 @@ public final class TaskScheduler {
 
     private TaskScheduler() {
     }
+
+    /**
+     * 用本类自己的 logger，而不是 {@code AccountsX.LOGGER}：后者的静态初始化会加载
+     * {@code ClientModInitializer}，任何没有 Fabric 运行时的环境（单测、工具）里一取用就抛
+     * {@code NoClassDefFoundError}。这里的 catch 块一旦自己抛错，异常会穿出串行循环、带走唯一的
+     * 后台线程，之后所有 {@code submit()} 永久挂起——日志记录点必须绝对安全。
+     */
+    private static final Logger LOGGER = LoggerFactory.getLogger(TaskScheduler.class);
 
     /** UI 显示「正在操作」前的延迟（与旧实现一致，避免短任务闪烁）。 */
     private static final int TASK_DISPLAY_DELAY_MS = 100;
@@ -187,12 +196,18 @@ public final class TaskScheduler {
             future.cancel(true);
         } catch (Exception e) {
             future.completeExceptionally(e);
-            AccountsX.LOGGER.warn("An exception has occurred in AccountsX Background Thread.", e);
+            LOGGER.warn("An exception has occurred in AccountsX Background Thread.", e);
             try {
                 Platforms.getMinecraftPlatform().showToast("accountsx.account.fail.title", failureMessage(e));
             } catch (Throwable t) {
                 // 适配器不可用（如单元测试环境）；上面已记录日志。
             }
+        } catch (Error e) {
+            // 任务抛出 Error（链接错误、断言、OOM 之后的一次分配失败……）时也必须在这里收口：
+            // 一旦让它穿出串行循环，唯一的后台线程就没了，之后所有 submit() 的任务永远不会执行、
+            // 对应的 future 永远不完成，表现为整个模组卡死。已经记录并传递失败，不再向上抛。
+            future.completeExceptionally(e);
+            LOGGER.error("A fatal error has occurred in AccountsX Background Thread.", e);
         }
     }
 
