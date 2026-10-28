@@ -19,8 +19,21 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 
 public final class AccountManager {
+    /**
+     * 正在刷新的账号 → 该次刷新的完成信号。
+     *
+     * <p>启动批次和用户点击可能同时刷新同一个账号：两次刷新会各自拿一个令牌，
+     * 后落盘的覆盖先落盘的，而先落盘的那个已经在服务端作废，账号随即失效。
+     * 因此同一账号同一时刻只允许一次刷新，后来者等待前一次的结果。</p>
+     */
+    private static final ConcurrentHashMap<BaseAccount, CompletableFuture<Void>> PENDING_REFRESHES =
+            new ConcurrentHashMap<>();
+
     private static AccountRepository repository;
 
     private AccountManager() {
@@ -153,6 +166,11 @@ public final class AccountManager {
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
             // 刷新成功后 refreshAccount 自己会把 storage 变更落盘，这里不再重复 touch。
             refreshAccount(account, true);
+
+            // 等待在途刷新时，对方可能已经失败；此时不能再拿旧令牌去构建会话。
+            if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
+                throw new IOException("Account " + account.getAccountType() + " is still unauthorized after refresh");
+            }
         }
 
         return Platforms.authlibBridge().createAccountProfile(
@@ -205,8 +223,47 @@ public final class AccountManager {
 
     @Threading.Thread(Threading.ThreadRole.WORKER)
     private static void refreshAccount(BaseAccount account, boolean thrown) throws IOException {
+        CompletableFuture<Void> mine = new CompletableFuture<>();
+        CompletableFuture<Void> inFlight = PENDING_REFRESHES.putIfAbsent(account, mine);
+        if (inFlight != null) {
+            // 已有同账号刷新在跑：等它的结果，不重复轮换令牌。
+            awaitPendingRefresh(inFlight, thrown);
+            return;
+        }
+
+        try {
+            doRefreshAccount(account, thrown);
+        } finally {
+            PENDING_REFRESHES.remove(account, mine);
+            mine.complete(null);
+        }
+    }
+
+    /**
+     * 等待同一账号的在途刷新。
+     *
+     * <p>完成信号只表示「那次刷新已经结束」，不含失败信息：失败已经由在途那一次自己处理
+     * （落状态、打日志，或在 {@code thrown} 时抛给它的调用方）。这里等完后由调用方重新检查
+     * 账号状态决定下一步，避免把两个调用方的错误处理纠缠在一起。</p>
+     */
+    private static void awaitPendingRefresh(CompletableFuture<Void> pending, boolean thrown) throws IOException {
+        try {
+            pending.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (thrown) {
+                throw new IOException("Interrupted while waiting for an in-flight refresh", e);
+            }
+        } catch (ExecutionException e) {
+            // 完成信号从不以异常结束；出现即说明内部 bug，记日志而不是静默吞掉。
+            AccountsX.LOGGER.warn("In-flight refresh ended exceptionally.", e.getCause());
+        }
+    }
+
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    private static void doRefreshAccount(BaseAccount account, boolean thrown) throws IOException {
         if (Thread.currentThread().isInterrupted()) {
-            account.setProfileState(AccountState.UNAUTHORIZED);
+            markUnauthorizedUnlessAlreadyAuthorized(account);
             if (thrown) {
                 throw new IOException("Interrupted");
             } else {
@@ -217,7 +274,7 @@ public final class AccountManager {
         try {
             AccountProvider.getProvider(account).refresh(account);
         } catch (IOException e) {
-            account.setProfileState(AccountState.UNAUTHORIZED);
+            markUnauthorizedUnlessAlreadyAuthorized(account);
             if (thrown) {
                 throw e;
             } else {
@@ -234,5 +291,18 @@ public final class AccountManager {
         // 而旧令牌已被服务端作废，账号就再也登录不上（用户报告的「重启后无法登录」）。
         // 仓储把写合并到串行通道，连续刷新的多个账号只会产生一次真实落盘。
         repository().touch(account);
+    }
+
+    /**
+     * 刷新失败时把账号标记为未授权，但如果它此刻已经是 AUTHORIZED 就保持原状。
+     *
+     * <p>同一账号的刷新链路上可能有并发的登录/切换，其中一个刚把状态写成 AUTHORIZED，
+     * 另一个的失败分支再把状态翻回 UNAUTHORIZED，会让可用账号在 UI 上显示成掉登录。
+     * 失败只负责「不要把未知状态当成已授权」，不负责否认别人的成功。</p>
+     */
+    private static void markUnauthorizedUnlessAlreadyAuthorized(BaseAccount account) {
+        if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
+            account.setProfileState(AccountState.UNAUTHORIZED);
+        }
     }
 }
