@@ -2,7 +2,7 @@
 
 Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Connector](https://modrinth.com/mod/connector)）。  
 支持在游戏内快速切换不同账号，无需重启客户端。  
-支持的游戏版本：1.20 - 26.2。
+支持的游戏版本：1.20 - 26.3。
 
 ## 功能
 
@@ -10,7 +10,6 @@ Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Conne
 - **离线账号** — 自定义玩家名，无需联网
 - **Microsoft 账号** — 通过 device-code OAuth 登录正版
 - **Authlib-Injector** — 第三方 Yggdrasil 认证服务器
-- **United-Injector** — 联合通行证认证
 
 ## 构建
 
@@ -41,12 +40,11 @@ Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Conne
 
 ## 配置文件
 
-| 文件     | 位置                             | 说明           |
-|----------|----------------------------------|----------------|
-| 实例配置 | `config/accountsx/accounts.json` | ID 索引        |
-| 账号载荷 | `~/.accountsx/<id>.json`         | 实例的账号数据 |
+| 文件     | 位置                       | 说明             |
+|----------|----------------------------|------------------|
+| 全局配置 | `~/.config/accountsx.json` | 账号与认证服务器 |
 
-> ⚠️ 账号载荷文件包含明文 token，请勿分享或提交到版本控制。
+> ⚠️ 配置文件包含明文 token，请勿分享或提交到版本控制。
 
 ## 许可
 
@@ -56,4 +54,4 @@ Minecraft 多账号切换 Fabric 模组（Forge/NeoForge请使用 [Sinytra Conne
 
 - [IAFEnvoy](https://github.com/IAFEnvoy)
 - [Burning_TNT](https://github.com/burningtnt)
-- [JianMoOvO](https://github.com/wotsginger)
+- [SITMC](https://github.com/SIT-Minecraft-Axolotl-Club)

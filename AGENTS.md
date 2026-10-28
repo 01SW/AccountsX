@@ -7,30 +7,30 @@ AI agent 和所有开发者的项目权威手册。保持与代码同步；任�
 Accounts X 是一个**客户端 Fabric 模组**，用于 Minecraft 多账号切换。支持离线账号、Microsoft（device-code OAuth）、Authlib-Injector（第三方 Yggdrasil）账号，以及启动器提供的环境账号。
 
 - 基础包：`top.syshub.accountsx`
-- Java **25**（`sourceCompatibility` / `targetCompatibility`）
-- Gradle **9.7.0**（wrapper），Fabric Loom **1.17-SNAPSHOT**
-- Fabric Loader：**0.19.3**（各适配器固定版本；common 使用 `compileOnly`）
+- JDK **25** 构建；common 字节码目标 Java **17**，各 MC 适配器按 `gradle/adapters.toml` 的 `java` 字段取 17 / 21 / 25
+- Gradle **9.8.2**（wrapper），Fabric Loom **1.17-SNAPSHOT**
+- Fabric Loader：**0.19.5**（13 个 MC 适配器共用；common 使用 `compileOnly`）
 - 版本号：`gradle.properties`
 - 许可：GPL-3.0
 - 仓库：https://github.com/Dainsleif233/AccountsX
 
 ### MC 版本支持矩阵
 
-| Minecraft | authlib | Loom 插件         | Fabric API |
-|-----------|---------|-------------------|------------|
-| 1.20      | 4.0.43  | fabric-loom-remap | 0.83.0     |
-| 1.20.2    | 5.0.47  | fabric-loom-remap | 0.91.6     |
-| 1.20.3    | 6.0.52  | fabric-loom-remap | 0.91.1     |
-| 1.20.5    | 6.0.54  | fabric-loom-remap | 0.97.8     |
-| 1.21      | 6.0.54  | fabric-loom-remap | 0.102.0    |
-| 1.21.2    | 6.0.54  | fabric-loom-remap | 0.106.1    |
-| 1.21.4    | 6.0.54  | fabric-loom-remap | 0.118.5    |
-| 1.21.6    | 6.0.54  | fabric-loom-remap | 0.128.0    |
-| 1.21.9    | 7.0.61  | fabric-loom-remap | 0.134.0    |
-| 1.21.11   | 7.0.61  | fabric-loom-remap | 0.139.4    |
-| 26.1      | 7.0.61  | fabric-loom       | 0.145.1    |
-| 26.2      | 7.0.61  | fabric-loom       | 0.158.0    |
-| 26.3      | 10.0.77 | fabric-loom       | 0.160.5    |
+| Minecraft | authlib | Java | Loom 插件         | Fabric API |
+|-----------|---------|------|-------------------|------------|
+| 1.20      | 4.0.43  | 17   | fabric-loom-remap | 0.83.0     |
+| 1.20.2    | 5.0.47  | 17   | fabric-loom-remap | 0.91.6     |
+| 1.20.3    | 6.0.52  | 17   | fabric-loom-remap | 0.91.1     |
+| 1.20.5    | 6.0.54  | 21   | fabric-loom-remap | 0.97.8     |
+| 1.21      | 6.0.54  | 21   | fabric-loom-remap | 0.102.0    |
+| 1.21.2    | 6.0.54  | 21   | fabric-loom-remap | 0.106.1    |
+| 1.21.4    | 6.0.54  | 21   | fabric-loom-remap | 0.118.5    |
+| 1.21.6    | 6.0.54  | 21   | fabric-loom-remap | 0.128.0    |
+| 1.21.9    | 7.0.61  | 21   | fabric-loom-remap | 0.134.0    |
+| 1.21.11   | 7.0.61  | 21   | fabric-loom-remap | 0.139.4    |
+| 26.1      | 7.0.61  | 25   | fabric-loom       | 0.145.1    |
+| 26.2      | 7.0.61  | 25   | fabric-loom       | 0.158.0    |
+| 26.3      | 10.0.77 | 25   | fabric-loom       | 0.160.5    |
 
 每个 MC 适配器的 `depends.minecraft` 使用 `>=<版本>` 无上界，Fabric Loader 在所有满足的候选适配器中选版本号最大的那个。  
 这是有意设计——新增更高版本 MC 时**不需要修改已有适配器的上界**。  
@@ -178,7 +178,7 @@ MC/loader/API/authlib/java 版本由 `gradle/adapters.toml` 的 `[[mc]]` 条目�
 
 ### Mod Menu 集成
 
-Mod Menu 的「配置入口」由各 mc 适配器 `fabric.mod.json` 的 `custom.modmenu.parent`（指向 `accountsx`）提供，UI 复用 mc 适配器的 `AccountScreen`。Mod Menu 本体（com.terraformersmc:modmenu）作为 mc 适配器（obfuscated 分支）的 `modImplementation` 依赖，版本声明在 `gradle/adapters.toml` 每个 `[[mc]]` 的 `modmenu` 字段里。
+Mod Menu 的「配置入口」由各 mc 适配器 `fabric.mod.json` 的 `custom.modmenu.parent`（指向 `accountsx`）提供，UI 复用 mc 适配器的 `AccountScreen`。Mod Menu 本体（com.terraformersmc:modmenu）由 `accountsx.mc.adapter` 按 `gradle/adapters.toml` 每个 `[[mc]]` 的 `modmenu` 字段加入：混淆分支用 `modImplementation`，非混淆分支（26.1+）用 `implementation`。
 
 ### 构建期单一数据源
 
@@ -244,15 +244,15 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 ### 加一个 MC 版本
 
 1. 确定该 MC 版本不能正常运行，非正式版的版本识别可能不正确，需要手动调整依赖再测试
-2. 在 `gradle/adapters.toml` 追加 `[[mc]]` 条目（version / authlib / fabricApi / obfuscated），**漏这步子项目不会被 `include`**
+2. 在 `gradle/adapters.toml` 追加 `[[mc]]` 条目（version / authlib / fabricApi / modmenu / java / obfuscated），**漏这步子项目不会被 `include`**
 3. 只建 `build.gradle.kts`，不要整目录拷贝：新版本的 Java 文件放 `adapters/mc/<新版本>/src/main/java/...`，
    与近邻相同的文件一律不复制（回落会继承），编译报错再按缺口补文件
 4. 改 `adapters/mc/<新版本>/build.gradle.kts` 里的 Loom 插件 id（26.1+ 用 `net.fabricmc.fabric-loom`，否则 `net.fabricmc.fabric-loom-remap`），版本号不写在这里
 5. 按需修改 `MinecraftAdapterImpl` 和 `ui/` 以适配 API 变更
 6. 若当前 MC 版本不适配 authlib 版本，则按「加 authlib 版本」步骤操作
-7. `./gradlew :adapters:mc:<新版本>:build :checkAdapterSourceResolver` 并修复编译错误
-8. `./gradlew :validateAdapterMatrix`（模拟 Loader 选择，确认新版本选中新适配器）
-9. 构建全量 jar 并在游戏内验证：`./gradlew build`（含 `universal` + `verifyUniversalJar`）
+7. `./gradlew --no-daemon --stacktrace :adapters:mc:<新版本>:build :checkAdapterSourceResolver` 并修复编译错误
+8. `./gradlew --no-daemon --stacktrace :validateAdapterMatrix`（模拟 Loader 选择，确认新版本选中新适配器）
+9. 构建全量 jar 并在游戏内验证：`./gradlew --no-daemon --stacktrace build`（含 `universal` + `verifyUniversalJar`）
 10. 同步 AGENTS.md 顶部的支持矩阵表
 11. commit：`feat(mc): 新增 MC <版本> 适配器`
 
@@ -260,8 +260,8 @@ Lang key 在 `src/main/resources/assets/accountsx/lang/`（`en_us.json`、`zh_cn
 
 1. 在 `gradle/adapters.toml` 追加 `[[authlib]]` 条目
 2. 在 `adapters/authlib/<新版本>/` 创建 `build.gradle.kts`，只写 `plugins { java; id("accountsx.authlib.adapter") }`
-3. 实现 `AuthlibAdapterImpl` + `AccountSessionImpl`
-4. `./gradlew :adapters:authlib:<新版本>:build`
+3. 实现 `AuthlibAdapterImpl` + `AccountSessionImpl`，贴图会话策略与签名状态解析走 `PolicySessionService`（其余版本已有同形实现，参照相邻版本）
+4. `./gradlew --no-daemon --stacktrace :adapters:authlib:<新版本>:build`
 
 ### 加一个账号类型
 
