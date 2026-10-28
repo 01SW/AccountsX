@@ -66,8 +66,8 @@ public final class YggdrasilDeviceCodeFlow {
         JsonObject device = http.postForm(endpoints.deviceAuthorizationEndpoint(),
                 Map.of("client_id", endpoints.clientId(), "scope", SCOPE));
         return new DeviceCode(
-                device.get("device_code").getAsString(),
-                device.get("user_code").getAsString(),
+                requireString(device, "device_code"),
+                requireString(device, "user_code"),
                 str(device.get("verification_uri")),
                 str(device.get("verification_uri_complete")),
                 Math.max(intOr(device.get("interval"), 5), 1),
@@ -100,14 +100,19 @@ public final class YggdrasilDeviceCodeFlow {
                     "device_code", code.deviceCode()), true);
 
             JsonElement err = token.get("error");
-            if (err == null) {
-                accessToken = token.get("access_token").getAsString();
-                refreshToken = token.get("refresh_token").getAsString();
-                idToken = token.get("id_token").getAsString();
+            if (err == null || err.isJsonNull()) {
+                // 三个令牌缺一不可：少了 refresh_token 等于「一次能用」的账号，少了 id_token 就
+                // 不知道这个令牌属于哪个角色，都不能当成功处理。
+                validateTokens(token);
+                accessToken = requireString(token, "access_token");
+                refreshToken = requireString(token, "refresh_token");
+                idToken = requireString(token, "id_token");
                 break;
             }
 
-            String error = err.getAsString();
+            String error = str(err);
+            if (error == null)
+                throw new IOException("Token endpoint returned an unreadable error.");
             if (error.equals("authorization_pending") || error.equals("slow_down"))
                 continue;
             if (error.equals("access_denied"))
@@ -117,8 +122,8 @@ public final class YggdrasilDeviceCodeFlow {
             throw new IOException("Unknown error: " + error);
         }
 
-        if (accessToken == null || refreshToken == null || idToken == null)
-            throw new IOException("Invalid token.");
+        if (accessToken == null)
+            throw new IOException("Timed out waiting for authorization.");
 
         return toResult(http, server.apiRoot(), accessToken, refreshToken, idToken,
                 code.tokenEndpoint(), code.clientId());
@@ -157,16 +162,19 @@ public final class YggdrasilDeviceCodeFlow {
                 "grant_type", "refresh_token",
                 "refresh_token", refreshToken
         );
-        JsonObject token = http.postForm(tokenEndpoint, form);
+        // 不校验状态码：RFC 6749 的错误体（400/403 + {error, error_description}）比裸状态码有用得多，
+        // 旧实现按状态码抛 IOException，错误原因就只剩「HTTP 400」。
+        JsonObject token = http.postForm(tokenEndpoint, form, true);
+        throwIfRejected(token);
+        validateTokens(token);
+        String accessToken = requireString(token, "access_token");
+        String idToken = requireString(token, "id_token");
+        // refresh_token 只在申请了 offline_access 时才「必须」，服务端可以不轮换：
+        // 不返回就沿用信封里的旧值，否则一次成功刷新会把账号变成再也刷不动的死账号。
+        String rotated = optionalString(token, "refresh_token");
 
-        JsonElement err = token.get("error");
-        if (err != null)
-            throw new IOException("Unknown error: " + err.getAsString());
-        String accessToken = token.get("access_token").getAsString();
-        String newRefresh = token.get("refresh_token").getAsString();
-        String idToken = token.get("id_token").getAsString();
-
-        return toResult(http, apiRoot, accessToken, newRefresh, idToken, tokenEndpoint, clientId);
+        return toResult(http, apiRoot, accessToken, rotated != null ? rotated : refreshToken, idToken,
+                tokenEndpoint, clientId);
     }
 
     /** token 响应 → 账号数据：id_token 给身份，sessionserver 给头像。 */
@@ -189,6 +197,46 @@ public final class YggdrasilDeviceCodeFlow {
         String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
         JsonObject userinfo = JsonParser.parseString(payload).getAsJsonObject();
         return YggdrasilProfiles.readProfiles(userinfo).get(0);
+    }
+
+    /**
+     * 端点错误体（RFC 6749 §5.2）：{@code error} / {@code error_description}。
+     *
+     * <p>消息里只带错误码与描述，绝不拼整个响应体——设备码轮询的响应里可能带着令牌。</p>
+     */
+    private static void throwIfRejected(JsonObject token) throws IOException {
+        JsonElement err = token.get("error");
+        if (err == null || err.isJsonNull())
+            return;
+        String error = str(err);
+        if (error == null)
+            throw new IOException("Token endpoint returned an unreadable error.");
+        String description = str(token.get("error_description"));
+        throw new IOException("Token endpoint rejected the request: " + error
+                + (description == null ? "" : " (" + description + ")"));
+    }
+
+    /** 校验 token 响应里能校验的元信息：{@code token_type} 必须是 Bearer，{@code expires_in} 必须为正。 */
+    private static void validateTokens(JsonObject token) throws IOException {
+        String tokenType = str(token.get("token_type"));
+        if (tokenType != null && !"Bearer".equalsIgnoreCase(tokenType))
+            throw new IOException("Unexpected token_type: " + tokenType);
+        JsonElement expiresIn = token.get("expires_in");
+        if (expiresIn instanceof JsonPrimitive p && p.isNumber() && p.getAsLong() <= 0)
+            throw new IOException("Token response declares a non-positive expires_in: " + p.getAsString());
+    }
+
+    /** 必需的字符串字段；缺失或类型不对时报出字段名与本响应出现过哪些字段，便于对着服务端排查。 */
+    private static String requireString(JsonObject json, String field) throws IOException {
+        String value = optionalString(json, field);
+        if (value == null)
+            throw new IOException("Response does not contain a string " + field + "; fields=" + json.keySet());
+        return value;
+    }
+
+    private static String optionalString(JsonObject json, String field) {
+        String value = str(json.get(field));
+        return value == null || value.isBlank() ? null : value;
     }
 
     private static int intOr(JsonElement e, int fallback) {

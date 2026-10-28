@@ -2,6 +2,7 @@ package top.syshub.accountsx.common.auth;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -36,6 +37,10 @@ class DeviceCodeFlowTest {
     private final AtomicInteger tokenHits = new AtomicInteger();
     /** true 时 token 端点一直回 authorization_pending，用于验证取消。 */
     private volatile boolean pendingForever;
+    /** 非 null 时 token 端点改回这个错误体（HTTP 400），用于验证错误原因不被状态码吞掉。 */
+    private volatile String tokenErrorBody;
+    /** true 时成功响应省略 refresh_token，用于验证「缺字段报字段名」而非 NPE。 */
+    private volatile boolean omitRefreshToken;
 
     @BeforeEach
     void startStub() throws IOException {
@@ -60,13 +65,22 @@ class DeviceCodeFlowTest {
                 }
                 case "POST /api/yggdrasil/oauth/token" -> {
                     tokenHits.incrementAndGet();
-                    body = new JsonObject();
-                    if (pendingForever) {
-                        body.addProperty("error", "authorization_pending");
+                    String errorBody = tokenErrorBody;
+                    if (errorBody != null) {
+                        code = 400;
+                        body = JsonParser.parseString(errorBody).getAsJsonObject();
                     } else {
-                        body.addProperty("access_token", "fake-access2");
-                        body.addProperty("refresh_token", "fake-refresh2");
-                        body.addProperty("id_token", fakeIdToken());
+                        body = new JsonObject();
+                        if (pendingForever) {
+                            body.addProperty("error", "authorization_pending");
+                        } else {
+                            body.addProperty("access_token", "fake-access2");
+                            if (!omitRefreshToken)
+                                body.addProperty("refresh_token", "fake-refresh2");
+                            body.addProperty("id_token", fakeIdToken());
+                            body.addProperty("token_type", "Bearer");
+                            body.addProperty("expires_in", 3600);
+                        }
                     }
                 }
                 case "GET /api/yggdrasil/sessionserver/session/minecraft/profile/" + UUID32 -> {
@@ -162,5 +176,45 @@ class DeviceCodeFlowTest {
         assertThat(account.getLoginToken()).startsWith(AccountOAuth.PREFIX).contains("fake-refresh2");
         assertThat(deviceHits).hasValue(1);
         assertThat(tokenHits).hasValue(1);
+    }
+
+    @Test
+    void awaitToken_missingRefreshTokenReportsFieldName() throws Exception {
+        omitRefreshToken = true;
+        YggdrasilDeviceCodeFlow.DeviceCode code =
+                YggdrasilDeviceCodeFlow.requestDeviceCode(JdkHttpGateway.INSTANCE, authServer);
+
+        assertThatThrownBy(() -> YggdrasilDeviceCodeFlow.awaitToken(JdkHttpGateway.INSTANCE, authServer, code,
+                millis -> { }, () -> false))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("refresh_token")
+                .hasMessageContaining("fields=");
+    }
+
+    @Test
+    void refresh_reportsOauthErrorBodyInsteadOfBareStatus() {
+        tokenErrorBody = "{\"error\":\"invalid_grant\",\"error_description\":\"refresh token was revoked\"}";
+        String envelope = AccountOAuth.envelope("fake-refresh1", apiRoot + "/oauth/token", "fake-shared-client")
+                .substring(AccountOAuth.PREFIX.length());
+
+        assertThatThrownBy(() -> YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, apiRoot))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("invalid_grant")
+                .hasMessageContaining("refresh token was revoked");
+    }
+
+    @Test
+    void refresh_keepsExistingRefreshTokenWhenServerDoesNotRotate() throws Exception {
+        // 规范里 refresh_token 只在申请了 offline_access 时才必须返回；服务端不轮换时沿用旧值，
+        // 否则一次「成功」的刷新会把账号变成再也刷不动的死账号。
+        omitRefreshToken = true;
+        String envelope = AccountOAuth.envelope("fake-refresh1", apiRoot + "/oauth/token", "fake-shared-client")
+                .substring(AccountOAuth.PREFIX.length());
+
+        YggdrasilAuthResult result = YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, apiRoot);
+
+        assertThat(result.accessToken()).isEqualTo("fake-access2");
+        assertThat(result.refreshToken()).isEqualTo("fake-refresh1");
+        assertThat(result.playerName()).isEqualTo("Alex");
     }
 }
