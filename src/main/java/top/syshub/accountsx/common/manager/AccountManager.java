@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AccountManager {
     /**
@@ -84,12 +85,26 @@ public final class AccountManager {
 
         if (!toRefresh.isEmpty()) {
             List<TaskScheduler.Task> refreshTasks = new ArrayList<>(toRefresh.size());
+            // 刷新失败在内部被消化成 UNAUTHORIZED，任务本身不会异常，因此单独计数给用户一个交代：
+            // 启动刷新在后台跑，用户看不到日志，只会在列表里看到账号变成"未登录"。
+            AtomicInteger failed = new AtomicInteger();
             for (BaseAccount account : toRefresh) {
-                refreshTasks.add(() -> refreshAccount(account, false));
+                refreshTasks.add(() -> {
+                    refreshAccount(account, false);
+                    if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
+                        failed.incrementAndGet();
+                    }
+                });
             }
             TaskScheduler.runParallel(refreshTasks).whenComplete((ignored, t) -> {
                 if (t != null) {
                     AccountsX.LOGGER.warn("Some accounts failed to refresh during startup.", t);
+                }
+                int count = failed.get();
+                if (count > 0) {
+                    AccountsX.LOGGER.warn("{} account(s) could not be refreshed during startup.", count);
+                    Platforms.getMinecraftPlatform().showToast(
+                            "accountsx.account.fail.title", "accountsx.account.fail.startup_refresh", count);
                 }
             });
         }

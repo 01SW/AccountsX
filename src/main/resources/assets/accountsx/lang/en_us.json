@@ -2,6 +2,7 @@
   "accountsx.account.fail.injector_login": "External login failed. Check the auth server address, user ID, and password.",
   "accountsx.account.fail.injector_invalid_token": "This external login account's credential has expired. Remove it and add it again.",
   "accountsx.account.fail.player_no_longer_existed": "Cannot find a matched player!",
+  "accountsx.account.fail.startup_refresh": "%d account(s) could not be refreshed at startup. Sign them in again from the list; if that still fails, remove and re-add them.",
   "accountsx.account.fail.title": "Account Operation Failed",
   "accountsx.account.fail.unknown": "Unknown exceptions have occurred. Please check the logs or seek help.",
   "accountsx.account.general.account_list": "Accounts",
