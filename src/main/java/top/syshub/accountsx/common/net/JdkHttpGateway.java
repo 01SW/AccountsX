@@ -103,14 +103,18 @@ public final class JdkHttpGateway implements HttpGateway {
 
     /** {@inheritDoc} */
     @Override
-    public Map<String, List<String>> head(String url) throws IOException {
+    public Headers getHeaders(String url) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(requestTimeout)
-                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .header("Accept", "application/json")
+                .GET()
                 .build();
         try {
             HttpResponse<Void> response = CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
-            return response.headers().map();
+            // 用 GET 而非 HEAD：部分服务器对 HEAD 直接 405/404，且这里需要跟随重定向后的最终 URL。
+            return new Headers(response.uri(), response.headers().map());
+        } catch (HttpTimeoutException e) {
+            throw new IOException("Request to " + url + " timed out after " + requestTimeout.toSeconds() + "s", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted.", e);

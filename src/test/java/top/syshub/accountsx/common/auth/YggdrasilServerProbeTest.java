@@ -63,7 +63,7 @@ class YggdrasilServerProbeTest {
         }
 
         @Override
-        public Map<String, List<String>> head(String url) {
+        public Headers getHeaders(String url) {
             throw new UnsupportedOperationException();
         }
 
@@ -168,6 +168,104 @@ class YggdrasilServerProbeTest {
         return YggdrasilServerProbe.probe(
                 new StubGateway().put(API_ROOT, root).put(OPENID_URL, openidConfig(null)),
                 API_ROOT, Map.of()).metadata();
+    }
+
+    /**
+     * 只服务响应头的网关：url → 最终 URL + 响应头。用来测「API 地址指示」解析，
+     * 该路径只要头，不该解析响应体。
+     */
+    private static final class StubHeaderGateway implements HttpGateway {
+        private final Map<String, Headers> responses = new HashMap<>();
+        private final Map<String, Integer> hits = new HashMap<>();
+
+        StubHeaderGateway put(String url, String finalUrl, Map<String, List<String>> headers) {
+            this.responses.put(url, new Headers(java.net.URI.create(finalUrl), headers));
+            return this;
+        }
+
+        @Override
+        public Headers getHeaders(String url) throws IOException {
+            hits.merge(url, 1, Integer::sum);
+            Headers headers = this.responses.get(url);
+            if (headers == null)
+                throw new IOException("unexpected GET " + url);
+            return headers;
+        }
+
+        @Override
+        public JsonObject get(String url) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonObject get(String url, Map<String, String> headers) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonObject postJson(String url, JsonElement body) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonObject postForm(String url, Map<String, String> formData) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonObject postForm(String url, Map<String, String> formData, boolean ignoreHttpStatus) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte[] getBinary(String url) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** 规范要求：没有 ALI 头时「当前 URL」就是 API 地址，不得猜 /api/yggdrasil。 */
+    @Test
+    void resolveApiRoot_withoutAliHeaderKeepsCurrentUrl() throws IOException {
+        StubHeaderGateway gateway = new StubHeaderGateway()
+                .put("https://injector.test/api/yggdrasil", "https://injector.test/api/yggdrasil", Map.of());
+
+        assertThat(YggdrasilServerProbe.resolveApiRoot("https://injector.test/api/yggdrasil", gateway))
+                .isEqualTo("https://injector.test/api/yggdrasil");
+    }
+
+    @Test
+    void resolveApiRoot_usesAliHeader() throws IOException {
+        StubHeaderGateway gateway = new StubHeaderGateway()
+                .put("https://injector.test/", "https://injector.test/",
+                        Map.of("X-Authlib-Injector-API-Location", List.of("/api/yggdrasil")));
+
+        assertThat(YggdrasilServerProbe.resolveApiRoot("https://injector.test/", gateway))
+                .isEqualTo("https://injector.test/api/yggdrasil");
+    }
+
+    /** 跟随重定向后，规范里的「当前 URL」是最终地址，不是用户输入的那个。 */
+    @Test
+    void resolveApiRoot_usesFinalUrlOfRedirect() throws IOException {
+        StubHeaderGateway gateway = new StubHeaderGateway()
+                .put("https://short.test/ali", "https://injector.test/api/yggdrasil", Map.of());
+
+        assertThat(YggdrasilServerProbe.resolveApiRoot("https://short.test/ali", gateway))
+                .isEqualTo("https://injector.test/api/yggdrasil");
+    }
+
+    @Test
+    void resolveApiRoot_selfReferencingAliStaysOnCurrentUrl() throws IOException {
+        StubHeaderGateway gateway = new StubHeaderGateway()
+                .put("https://injector.test/api/yggdrasil", "https://injector.test/api/yggdrasil",
+                        Map.of("X-Authlib-Injector-API-Location", List.of("https://injector.test/api/yggdrasil")));
+
+        assertThat(YggdrasilServerProbe.resolveApiRoot("injector.test/api/yggdrasil", gateway))
+                .isEqualTo("https://injector.test/api/yggdrasil");
     }
 
     @Test

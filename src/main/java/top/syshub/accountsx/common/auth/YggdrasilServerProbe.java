@@ -19,8 +19,6 @@ import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.NetworkUtils;
 
 public final class YggdrasilServerProbe {
-    private static final int MAX_API_LOCATION_HOPS = 10;
-
     private YggdrasilServerProbe() {
     }
 
@@ -47,39 +45,34 @@ public final class YggdrasilServerProbe {
         }
     }
 
+    /**
+     * 把用户输入的地址解析成 API 根地址（启动器技术规范「API 地址指示」）。
+     *
+     * <p>顺序是：对输入地址发 GET（跟随重定向）→ 响应头有
+     * {@code X-Authlib-Injector-API-Location} 就取它的值（可为相对地址）→
+     * 没有该头时不猜路径，当前 URL（跟随重定向后的最终地址）本身就是 API 地址。</p>
+     *
+     * <p>早先实现在没有 ALI 头时硬拼 {@code scheme://authority/api/yggdrasil}，
+     * 对 API 根不在该路径的服务器会解析到不存在的地址；同时用 HEAD 探测，
+     * 部分服务器对 HEAD 直接 405。</p>
+     */
     public static String resolveApiRoot(String locator, HttpGateway http) throws IOException {
-        String api = buildUrl(locator.trim());
-        int redirects = 0;
-        while (true) {
-            if (redirects > MAX_API_LOCATION_HOPS)
-                throw new IOException("Too many redirects (" + redirects
-                        + ") while resolving API location, last URL: " + api);
-            Map<String, List<String>> headers;
-            try {
-                headers = http.head(api);
-            } catch (IOException e) {
-                throw new IOException("Failed to resolve API location: " + api, e);
-            }
-            List<String> apiLocations = NetworkUtils.getHeaderIgnoreCase(headers, "X-Authlib-Injector-API-Location");
-            List<String> locations = NetworkUtils.getHeaderIgnoreCase(headers, "Location");
-            String candidate = null;
-            if (apiLocations != null && !apiLocations.isEmpty())
-                candidate = apiLocations.get(0);
-            else if (locations != null && !locations.isEmpty())
-                candidate = locations.get(0);
-            if (candidate == null) {
-                if (redirects == 0) {
-                    URI baseUri = URI.create(api);
-                    return baseUri.getScheme() + "://" + baseUri.getAuthority() + "/api/yggdrasil";
-                }
-                return api;
-            }
-            String next = NetworkUtils.resolveLocation(api, candidate);
-            if (next.equals(api))
-                return api;
-            redirects++;
-            api = next;
+        String requested = buildUrl(locator.trim());
+        HttpGateway.Headers response;
+        try {
+            response = http.getHeaders(requested);
+        } catch (IOException e) {
+            throw new IOException("Failed to resolve API location: " + requested, e);
         }
+        String current = response.finalUri() != null ? response.finalUri().toString() : requested;
+        List<String> apiLocations = NetworkUtils.getHeaderIgnoreCase(response.headers(), "X-Authlib-Injector-API-Location");
+        if (apiLocations == null || apiLocations.isEmpty())
+            return current;
+        String location = apiLocations.get(0);
+        if (location == null || location.isBlank())
+            return current;
+        // ALI 可能是相对地址，也可能自指（等于当前 URL），两种都由 resolveLocation 收敛。
+        return NetworkUtils.resolveLocation(current, location.trim());
     }
 
     static String buildUrl(String server) {

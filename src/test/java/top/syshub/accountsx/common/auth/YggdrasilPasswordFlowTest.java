@@ -69,8 +69,8 @@ class YggdrasilPasswordFlowTest {
         }
 
         @Override
-        public Map<String, List<String>> head(String url) {
-            throw new UnsupportedOperationException("fake: head not expected");
+        public Headers getHeaders(String url) {
+            throw new UnsupportedOperationException("fake: getHeaders not expected");
         }
 
         @Override

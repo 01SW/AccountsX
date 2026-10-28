@@ -60,7 +60,7 @@ class InjectorLoginStubTest {
             JsonObject body = null;
             int code = 200;
             switch (key) {
-                case "HEAD /" -> {
+                case "GET /" -> {
                     exchange.getResponseHeaders().add("X-Authlib-Injector-API-Location", "/api/yggdrasil");
                 }
                 case "GET /api/yggdrasil" -> {
@@ -97,13 +97,9 @@ class InjectorLoginStubTest {
             byte[] bytes = body == null ? new byte[0] : body.toString().getBytes(StandardCharsets.UTF_8);
             if (body != null)
                 exchange.getResponseHeaders().add("Content-Type", "application/json");
-            if ("HEAD".equals(method)) {
-                exchange.sendResponseHeaders(code, -1);
-            } else {
-                exchange.sendResponseHeaders(code, bytes.length == 0 ? -1 : bytes.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(bytes);
-                }
+            exchange.sendResponseHeaders(code, bytes.length == 0 ? -1 : bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
             }
         });
         server.start();
@@ -137,7 +133,7 @@ class InjectorLoginStubTest {
         assertThat(first.getServer()).isEqualTo(apiRoot);
         assertThat(first.getAccountStorage().getPlayerName()).isEqualTo("Steve");
         assertThat(first.getLoginToken()).isEqualTo("fake-access");
-        assertThat(count("HEAD /")).isEqualTo(1);
+        assertThat(count("GET /")).isEqualTo(1);
         assertThat(count("GET /api/yggdrasil")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/authserver/authenticate")).isEqualTo(1);
 
@@ -146,7 +142,7 @@ class InjectorLoginStubTest {
         assertThat(second.getServer()).isEqualTo(apiRoot);
         // 登录路径直接拿条目里的端点：第二个账号零探测，只多一次 authenticate
         assertThat(count("GET /api/yggdrasil")).isEqualTo(1);
-        assertThat(count("HEAD /")).isEqualTo(1);
+        assertThat(count("GET /")).isEqualTo(1);
         assertThat(count("POST /api/yggdrasil/authserver/authenticate")).isEqualTo(2);
 
         assertThat(server.displayName()).isEqualTo("FakeInjector");

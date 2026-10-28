@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -79,11 +80,12 @@ class AuthServerRegistryTest {
         }
 
         @Override
-        public Map<String, List<String>> head(String url) {
-            hit("HEAD " + url);
+        public Headers getHeaders(String url) {
+            hit("GET " + url);
             if (url.equals(LOCATOR))
-                return Map.of("X-Authlib-Injector-API-Location", List.of("/api/yggdrasil"));
-            return Map.of();
+                return new Headers(URI.create(url),
+                        Map.of("X-Authlib-Injector-API-Location", List.of("/api/yggdrasil")));
+            return new Headers(URI.create(url), Map.of());
         }
 
         @Override
@@ -110,8 +112,8 @@ class AuthServerRegistryTest {
         assertThat(first.displayName()).isEqualTo("FakeInjector");
         assertThat(first.oauth().clientId()).isEqualTo("fake-shared-client");
         assertThat(first.oauth().deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
-        // ALI 一跳 + 根文档一次 + openid 一次，之后条目里的端点/元数据都从内存取
-        assertThat(gateway.count("HEAD " + LOCATOR)).isEqualTo(1);
+        // ALI 一跳（GET）+ 根文档一次 + openid 一次，之后条目里的端点/元数据都从内存取
+        assertThat(gateway.count("GET " + LOCATOR)).isEqualTo(1);
         assertThat(gateway.count(API_ROOT)).isEqualTo(1);
         assertThat(changeEvents).hasSize(1);
         // add 只新增自己一条：mojang / offline 在 load() 时补齐，fresh 注册表没有
