@@ -140,7 +140,10 @@ public final class YggdrasilServerProbe {
         // 也不能用 ALI 解析过程中的中间域名（解析可能 301 跨域）。两处都取不到就判定该服务器不支持 OAuth。
         String clientId = knownClientIds == null ? null : knownClientIds.get(OAuthClientIds.key(apiRoot));
         JsonObject config = http.get(openidUrl);
-        String device = str(config.get("device_authorization_endpoint"));
+        // 设备码登录申请的 scope 固定带 openid 与 Yggdrasil.PlayerProfiles.Select；服务器若明确
+        // 声明了 scopes_supported 却不含它们，令牌请求只会拿回 invalid_scope。宁可不出设备码入口
+        // （密码登录照旧可用），也不要给一个点了必然失败的按钮。
+        String device = scopesAllowDeviceFlow(config) ? str(config.get("device_authorization_endpoint")) : null;
         String token = str(config.get("token_endpoint"));
         String userinfo = str(config.get("userinfo_endpoint"));
         // issuer / jwks_uri 只服务于 id_token 校验：没有它们就无法确认令牌的签发者与签名密钥。
@@ -151,6 +154,30 @@ public final class YggdrasilServerProbe {
         if (clientId == null)
             return null;
         return new OAuthEndpoints(clientId, token, device, userinfo, issuer, jwks);
+    }
+
+    /**
+     * 服务器的 {@code scopes_supported} 是否允许设备码登录。
+     *
+     * <p>缺失或空数组一律放行：无法判断时不替服务器做主，避免把一个能用的服务器判死；
+     * 只有服务器明确列出了 scope 集合、且缺了设备码流程必需的项时才禁用。</p>
+     */
+    static boolean scopesAllowDeviceFlow(JsonObject config) {
+        JsonElement scopes = config.get("scopes_supported");
+        if (scopes == null || !scopes.isJsonArray())
+            return true;
+        JsonArray array = scopes.getAsJsonArray();
+        if (array.isEmpty())
+            return true;
+        boolean openid = false, select = false;
+        for (JsonElement e : array) {
+            if (!(e instanceof JsonPrimitive p) || !p.isString())
+                continue;
+            String scope = p.getAsString();
+            openid |= "openid".equals(scope);
+            select |= "Yggdrasil.PlayerProfiles.Select".equals(scope);
+        }
+        return openid && select;
     }
 
     static PublicKey parseSignaturePublicKey(String pem)

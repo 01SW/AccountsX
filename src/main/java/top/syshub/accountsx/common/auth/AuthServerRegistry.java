@@ -235,7 +235,7 @@ public final class AuthServerRegistry {
         return new AuthServer(probed.apiRoot(), probed.kind(), probed.displayName(), merged, probed.cachedAt());
     }
 
-    /** locator → apiRoot。Yggdrasil 走最多 10 跳 HEAD 解析；固定条目原样返回。 */
+    /** locator → apiRoot。Yggdrasil 对输入地址发 GET 并跟随重定向，取 X-Authlib-Injector-API-Location 头或最终 URL；固定条目原样返回。 */
     @Threading.Thread(Threading.ThreadRole.WORKER)
     public String resolveApiRoot(AuthServerKind kind, String locator) throws IOException {
         return switch (kind) {

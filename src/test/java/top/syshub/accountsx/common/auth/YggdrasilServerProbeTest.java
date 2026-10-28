@@ -1,5 +1,6 @@
 package top.syshub.accountsx.common.auth;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.io.IOException;
@@ -162,6 +163,50 @@ class YggdrasilServerProbeTest {
 
         root.getAsJsonObject("meta").addProperty("feature.enable_profile_key", "true");
         assertThat(probeMetadata(root).profileKeySupported()).as("字符串不算声明").isFalse();
+    }
+
+    /** 服务器明确列出的 scope 缺设备码流程必需的项时，不给设备码入口（密码登录照旧）。 */
+    @Test
+    void incompleteScopes_disablesDeviceFlow() throws IOException {
+        JsonObject config = openidConfig(new com.google.gson.JsonPrimitive("26"));
+        JsonArray scopes = new JsonArray();
+        scopes.add("openid");
+        scopes.add("offline_access");
+        config.add("scopes_supported", scopes);
+
+        OAuthEndpoints oauth = probeOAuth(YggdrasilFixtures.rootMeta(API_ROOT), config, Map.of());
+
+        assertThat(oauth).isNotNull();
+        assertThat(oauth.deviceAuthorizationEndpoint()).as("缺 Select 就别给设备码按钮").isNull();
+        // 其余端点照旧：已有信封账号的刷新只需要 token 端点
+        assertThat(oauth.tokenEndpoint()).isEqualTo(API_ROOT + "/oauth/token");
+        assertThat(supports(oauth)).isFalse();
+    }
+
+    @Test
+    void completeScopes_keepsDeviceFlow() throws IOException {
+        JsonObject config = openidConfig(new com.google.gson.JsonPrimitive("26"));
+        JsonArray scopes = new JsonArray();
+        scopes.add("openid");
+        scopes.add("offline_access");
+        scopes.add("Yggdrasil.PlayerProfiles.Select");
+        config.add("scopes_supported", scopes);
+
+        OAuthEndpoints oauth = probeOAuth(YggdrasilFixtures.rootMeta(API_ROOT), config, Map.of());
+
+        assertThat(oauth).isNotNull();
+        assertThat(oauth.deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
+        assertThat(supports(oauth)).isTrue();
+    }
+
+    @Test
+    void missingScopes_isNotJudged() throws IOException {
+        // 无法判断时不替服务器做主：没发布 scopes_supported 的服务器仍可用设备码登录。
+        OAuthEndpoints oauth = probeOAuth(YggdrasilFixtures.rootMeta(API_ROOT),
+                openidConfig(new com.google.gson.JsonPrimitive("26")), Map.of());
+
+        assertThat(oauth).isNotNull();
+        assertThat(oauth.deviceAuthorizationEndpoint()).isEqualTo(API_ROOT + "/oauth/device");
     }
 
     private static AuthServerMetadata probeMetadata(JsonObject root) throws IOException {
