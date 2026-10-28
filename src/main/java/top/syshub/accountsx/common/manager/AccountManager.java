@@ -5,6 +5,8 @@ import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.BaseAccount;
 import top.syshub.accountsx.common.accounts.model.AccountState;
 import top.syshub.accountsx.common.accounts.model.AccountType;
+import top.syshub.accountsx.common.accounts.impl.injector.InjectorProfileKeys;
+import top.syshub.accountsx.common.accounts.model.context.AccountContext;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
 import top.syshub.accountsx.common.auth.AuthServer;
@@ -33,6 +35,7 @@ public final class AccountManager {
      */
     private static final ConcurrentHashMap<BaseAccount, CompletableFuture<Void>> PENDING_REFRESHES =
             new ConcurrentHashMap<>();
+
 
     private static AccountRepository repository;
 
@@ -173,9 +176,14 @@ public final class AccountManager {
             }
         }
 
+        AccountContext context = AccountProvider.getProvider(account).createAccountContext(account);
+
+        // 必须在构建会话之前同步：mixin 在会话内随时可能被调用，晚一步就会继续伪造档案密钥对。
+        InjectorProfileKeys.setSupported(context.server().profileKeySupported());
+
         return Platforms.authlibBridge().createAccountProfile(
                 account.getAccountStorage(),
-                AccountProvider.getProvider(account).createAccountContext(account),
+                context,
                 Platforms.getMinecraftPlatform().getGameProxy()
         );
     }

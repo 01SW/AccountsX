@@ -151,6 +151,25 @@ class YggdrasilServerProbeTest {
                 .isEqualTo("https://skin.jsumc.fun:443/api/yggdrasil");
     }
 
+    /** 只有布尔 true 才算声明支持档案密钥对；字符串 "true" 与缺失都按未声明处理。 */
+    @Test
+    void profileKeySupportRequiresExplicitBooleanTrue() throws IOException {
+        JsonObject root = YggdrasilFixtures.rootMeta(API_ROOT);
+        assertThat(probeMetadata(root).profileKeySupported()).as("默认未声明").isFalse();
+
+        root.getAsJsonObject("meta").addProperty("feature.enable_profile_key", true);
+        assertThat(probeMetadata(root).profileKeySupported()).isTrue();
+
+        root.getAsJsonObject("meta").addProperty("feature.enable_profile_key", "true");
+        assertThat(probeMetadata(root).profileKeySupported()).as("字符串不算声明").isFalse();
+    }
+
+    private static AuthServerMetadata probeMetadata(JsonObject root) throws IOException {
+        return YggdrasilServerProbe.probe(
+                new StubGateway().put(API_ROOT, root).put(OPENID_URL, openidConfig(null)),
+                API_ROOT, Map.of()).metadata();
+    }
+
     @Test
     void withoutOpenidConfigurationServerHasNoOAuth() throws IOException {
         JsonObject root = YggdrasilFixtures.rootMeta(API_ROOT);

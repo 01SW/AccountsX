@@ -116,7 +116,23 @@ public final class YggdrasilServerProbe {
         } else {
             throw new IOException("Invalid Yggdrasil skinDomains!");
         }
-        return new AuthServerMetadata(keys, keys, List.copyOf(skinDomains));
+        return new AuthServerMetadata(keys, keys, List.copyOf(skinDomains), profileKeySupported(root));
+    }
+
+    /**
+     * 读取 {@code meta.feature.enable_profile_key}。
+     *
+     * <p>严格判断为布尔 {@code true}：authlib-injector 规范里这个开关存在多种历史写法，
+     * 字符串 {@code "true"} 或缺失都不能当作已声明——误判会让客户端对支持签名公钥的服务端
+     * 伪造密钥对，登录直接被踢（"无效的玩家档案公钥签名"）。</p>
+     */
+    private static boolean profileKeySupported(JsonObject root) {
+        if (root.get("meta") instanceof JsonObject meta
+                && meta.get("feature.enable_profile_key") instanceof JsonPrimitive flag
+                && flag.isBoolean()) {
+            return flag.getAsBoolean();
+        }
+        return false;
     }
 
     static OAuthEndpoints oauthFromMeta(HttpGateway http, JsonObject meta, String apiRoot,

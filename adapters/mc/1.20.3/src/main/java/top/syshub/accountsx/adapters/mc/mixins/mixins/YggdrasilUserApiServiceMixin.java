@@ -24,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.UUID;
+import top.syshub.accountsx.common.accounts.impl.injector.InjectorProfileKeys;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -92,7 +93,9 @@ public class YggdrasilUserApiServiceMixin {
             remap = false
     )
     private void getKeyPair(CallbackInfoReturnable<KeyPairResponse> cir) {
-        if (isThirdPartySession()) {
+        // 服务端声明 meta.feature.enable_profile_key 时必须用它真实签名的公钥：
+        // 这里再伪造一对，enforce-secure-profile 的服务器会以「无效的玩家档案公钥签名」踢人。
+        if (isThirdPartySession() && !InjectorProfileKeys.isSupported()) {
             KeyPairGenerator generator;
             try {
                 generator = KeyPairGenerator.getInstance("RSA");

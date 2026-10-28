@@ -74,7 +74,8 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                 url + "/api",
                 url + "/sessionserver",
                 url + "/minecraftservices",
-                accountContextName
+                accountContextName,
+                metadata.profileKeySupported()
         ), new AuthSecurityContext(
                 metadata.profilePropertyKeys(), metadata.playerCertificateKeys(),
                 SkinURLVerifier.ofOperationOR(SkinURLVerifier.ofDomainVerifier(metadata.skinDomains(), List.of()), SkinURLVerifier.MOJANG_DEFAULT)
