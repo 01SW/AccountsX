@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
@@ -25,6 +27,9 @@ public final class YggdrasilPasswordFlow {
      * 因此这里采用相同形状，避免只对 drasl 有效。
      */
     private static final SecureRandom CLIENT_TOKEN_RANDOM = new SecureRandom();
+
+    /** 用本地 logger 而非 {@code AccountsX.LOGGER}：后者依赖 Fabric 运行时，单测类路径上加载会失败。 */
+    private static final Logger LOGGER = LoggerFactory.getLogger(YggdrasilPasswordFlow.class);
 
     private YggdrasilPasswordFlow() {
     }
@@ -181,23 +186,51 @@ public final class YggdrasilPasswordFlow {
             account.setClientToken(echoed);
         }
 
-        List<YggdrasilProfiles.Profile> profiles = YggdrasilProfiles.readProfiles(json);
-        if (profiles.size() == 1) {
-            YggdrasilProfiles.Profile profile = profiles.get(0);
-            account.setLoginProfile(accessToken, profile.playerUuid());
-            account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUuid()));
+        // 关键顺序：**立刻**提交服务端已经轮换好的令牌，再去解析角色。
+        // 刷新一旦被服务端接受，旧 accessToken 就已经作废（drasl 递增版本号）；若此时因为角色解析
+        // 失败而把新令牌丢掉，账号会永久卡在「旧令牌已死、新令牌没保存」，只能重新添加。
+        // 角色解析失败因此降级为「保留旧档案 + 记一条警告」，不再影响令牌落地。
+        account.setLoginProfile(accessToken, account.getPreferredPlayerUUID());
+        account.setProfile(accessToken, account.getAccountStorage().getPlayerName(), account.getAccountStorage().getPlayerUUID());
+
+        YggdrasilProfiles.Profile profile = resolveRefreshedProfile(account, json);
+        if (profile == null) {
             return;
         }
-        String preferredPlayerUUID = account.getPreferredPlayerUUID();
-        for (YggdrasilProfiles.Profile profile : profiles) {
-            if (profile.playerUuid().equals(preferredPlayerUUID)) {
-                account.setLoginProfile(accessToken, profile.playerUuid());
-                account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUuid()));
-                AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUuid());
-                account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
-                return;
+
+        account.setLoginProfile(accessToken, profile.playerUuid());
+        account.setProfile(accessToken, profile.playerName(), AccountUUID.parse(profile.playerUuid()));
+
+        // 头像属于可选附加信息，失败由 AvatarService 自行吞掉。
+        AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUuid());
+        account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+    }
+
+    /**
+     * 解析刷新响应里的角色；解析不出来时保留账号原有档案并记警告（返回 {@code null}）。
+     * 刷新本身已经成功，绝不能因为角色信息异常把整次刷新判为失败。
+     */
+    private static YggdrasilProfiles.Profile resolveRefreshedProfile(AbstractInjectorAccount account, JsonObject json) {
+        try {
+            List<YggdrasilProfiles.Profile> profiles = YggdrasilProfiles.readProfiles(json);
+            if (profiles.size() == 1) {
+                return profiles.get(0);
             }
+
+            String preferredPlayerUUID = account.getPreferredPlayerUUID();
+            for (YggdrasilProfiles.Profile profile : profiles) {
+                if (profile.playerUuid().equals(preferredPlayerUUID)) {
+                    return profile;
+                }
+            }
+
+            // 服务端不再返回首选角色（例如角色已被删除、或服务端只回 selectedProfile）。
+            LOGGER.warn("Refreshed profile list does not contain the preferred player {}; keeping the previous profile.", preferredPlayerUUID);
+            return null;
+        } catch (RuntimeException e) {
+            // 解析失败（字段缺失、类型不对等）不再影响令牌落地。
+            LOGGER.warn("Cannot resolve the refreshed profile; keeping the previous one.", e);
+            return null;
         }
-        throw new PlayerNoLongerExistedException("Cannot find player which match " + preferredPlayerUUID);
     }
 }

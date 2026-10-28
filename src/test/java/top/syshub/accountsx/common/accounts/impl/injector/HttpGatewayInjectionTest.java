@@ -1,5 +1,6 @@
 package top.syshub.accountsx.common.accounts.impl.injector;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class HttpGatewayInjectionTest {
     private static final class FakeHttpGateway implements HttpGateway {
         private String lastUrl;
         private JsonElement lastBody;
+        private JsonObject response = refreshResponse();
 
         String lastUrl() {
             return lastUrl;
@@ -77,7 +79,7 @@ class HttpGatewayInjectionTest {
         public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) {
             this.lastUrl = url;
             this.lastBody = body;
-            return refreshResponse();
+            return response;
         }
 
         @Override
@@ -144,6 +146,53 @@ class HttpGatewayInjectionTest {
                 .extracting(e -> ((InjectorAuthException) e).getTranslationKey())
                 .isEqualTo("accountsx.account.fail.injector_invalid_token");
         assertThat(fake.lastUrl()).isNull();
+    }
+
+    /** 刷新响应只有新令牌、没有角色列表：令牌必须落地，档案保留旧值。 */
+    @Test
+    void refresh_commitsRotatedTokenEvenWithoutProfiles() throws ExecutionException, InterruptedException {
+        FakeHttpGateway fake = new FakeHttpGateway();
+        JsonObject body = new JsonObject();
+        body.addProperty("accessToken", NEW_TOKEN);
+        JsonArray empty = new JsonArray();
+        body.add("availableProfiles", empty);
+        fake.response = body;
+
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(fake);
+        UUID oldUuid = UUID.randomUUID();
+        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+                "old-injector-token", "OldName", oldUuid,
+                SERVER, oldUuid.toString(), null, null, 0L
+        );
+        account.setClientTokenForMigration(CLIENT_TOKEN);
+
+        TaskScheduler.submitParallel(() -> provider.refresh(account)).get();
+
+        // 服务端已轮换令牌；角色解析不出来也不能把新令牌丢掉。
+        assertThat(account.getLoginToken()).isEqualTo(NEW_TOKEN);
+        assertThat(account.getAccountStorage().getPlayerName()).isEqualTo("OldName");
+        assertThat(account.getAccountStorage().getPlayerUUID()).isEqualTo(oldUuid);
+    }
+
+    /** 角色列表形状异常（未检查异常）同样不能影响令牌落地。 */
+    @Test
+    void refresh_commitsRotatedTokenEvenWhenProfileParsingFails() throws ExecutionException, InterruptedException {
+        FakeHttpGateway fake = new FakeHttpGateway();
+        JsonObject body = new JsonObject();
+        body.addProperty("accessToken", NEW_TOKEN);
+        body.addProperty("availableProfiles", "not-an-array");
+        fake.response = body;
+
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(fake);
+        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+                "old-injector-token", "OldName", UUID.randomUUID(),
+                SERVER, UUID.randomUUID().toString(), null, null, 0L
+        );
+        account.setClientTokenForMigration(CLIENT_TOKEN);
+
+        TaskScheduler.submitParallel(() -> provider.refresh(account)).get();
+
+        assertThat(account.getLoginToken()).isEqualTo(NEW_TOKEN);
     }
 
     @Test
