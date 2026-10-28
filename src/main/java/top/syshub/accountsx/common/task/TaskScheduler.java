@@ -4,7 +4,7 @@ import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
-import top.syshub.accountsx.common.accounts.model.PlayerNoLongerExistedException;
+import top.syshub.accountsx.common.auth.ProfileSelectionRequiredException;
 import top.syshub.accountsx.common.adapters.Platforms;
 
 import java.util.ArrayList;
@@ -213,8 +213,9 @@ public final class TaskScheduler {
 
     /** 异常 → i18n key 映射（原 AccountManager.handleException）。 */
     private static String failureMessage(Throwable t) {
-        if (t instanceof PlayerNoLongerExistedException) {
-            return "accountsx.account.fail.player_no_longer_existed";
+        if (t instanceof ProfileSelectionRequiredException) {
+            // 没有界面可选角色时的兜底提示；正常情况下界面会先让用户勾选，不会走到这里。
+            return "accountsx.account.fail.select_profile";
         }
         if (t instanceof InjectorAuthException e) {
             return e.getTranslationKey();

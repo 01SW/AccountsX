@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
-import top.syshub.accountsx.common.accounts.model.PlayerNoLongerExistedException;
+import top.syshub.accountsx.common.auth.YggdrasilProfiles.Profile;
 import top.syshub.accountsx.common.net.HttpGateway;
 import top.syshub.accountsx.common.utils.AvatarService;
 import top.syshub.accountsx.common.utils.Threading;
@@ -19,6 +19,11 @@ import top.syshub.accountsx.common.utils.Threading;
 /**
  * Yggdrasil 用户名/密码流程（P3.1：从 {@code AbstractInjectorAccountProvider} 拆出）。
  * apiRoot 取自注册表条目，不再每登录做一次 API-Location 解析。
+ *
+ * <p>登录拆成「认证 → 选角色 → 绑定」三步：{@code /authenticate} 只证明凭据有效；一个账号可能有
+ * 多个角色，令牌到底属于哪个角色由 {@code /authserver/refresh} 的 {@code selectedProfile} 决定。
+ * 旧实现把三步揉在一起，于是多角色账号拿空玩家名去匹配而必然失败，单角色账号又从不绑定角色
+ * （刷新回来的仍是无角色的令牌）。</p>
  */
 public final class YggdrasilPasswordFlow {
     /**
@@ -32,6 +37,20 @@ public final class YggdrasilPasswordFlow {
     private static final Logger LOGGER = LoggerFactory.getLogger(YggdrasilPasswordFlow.class);
 
     private YggdrasilPasswordFlow() {
+    }
+
+    /**
+     * 认证成功、尚未选好角色的中间结果。
+     *
+     * <p>{@code bound} 非空表示服务端在认证响应里直接给了 {@code selectedProfile}（账号只有一个角色时
+     * 如此），令牌已经绑好，不必再刷新一次。draft 里带着 accessToken/clientToken，只在内存中传递，
+     * 绝不落盘、也不进日志。</p>
+     */
+    public record LoginDraft(String accessToken, String clientToken, List<Profile> profiles, Profile bound) {
+        /** 该 draft 的令牌是否已经绑在 {@code profile} 上。 */
+        public boolean isBoundTo(Profile profile) {
+            return bound != null && profile != null && bound.playerUuid().equals(profile.playerUuid());
+        }
     }
 
     /** 生成一个 32 字符十六进制 clientToken。 */
@@ -100,12 +119,34 @@ public final class YggdrasilPasswordFlow {
         return accessToken.getAsString();
     }
 
+    /**
+     * 构造 {@code selectedProfile}：{@code id} 必填，{@code name} 只有知道时才带。
+     *
+     * <p>规范写的是 id + name，但服务端判定归属只认 id；名字未知时塞 null 反而可能被严格实现拒绝。</p>
+     */
+    private static JsonObject selectedProfileJson(String playerUuid, String playerName) {
+        JsonObject selectedProfile = new JsonObject();
+        selectedProfile.addProperty("id", playerUuid);
+        if (playerName != null && !playerName.isEmpty()) {
+            selectedProfile.addProperty("name", playerName);
+        }
+        return selectedProfile;
+    }
+
+    private static JsonObject selectedProfileJson(Profile profile) {
+        return selectedProfileJson(profile.playerUuid(), profile.playerName());
+    }
+
+    /**
+     * 第一阶段：用户名/密码换 accessToken，并读出候选角色。
+     *
+     * <p>这一步不做任何角色选择——返回值交给界面，用户勾选后再逐个 {@link #bind}。之所以把角色选择
+     * 拆到外层，是因为「选哪个角色」只有在用户看到角色列表后才能决定。</p>
+     */
     @Threading.Thread(Threading.ThreadRole.WORKER)
-    public static YggdrasilAuthResult login(HttpGateway http, AuthServer server, String username,
-            String password, String wantedPlayer) throws IOException {
+    public static LoginDraft authenticate(HttpGateway http, AuthServer server, String username,
+            String password) throws IOException {
         String apiRoot = server.apiRoot();
-        String loginUrl = apiRoot + "/authserver/authenticate";
-        String profileUrl = apiRoot + "/sessionserver/session/minecraft/profile/";
 
         JsonObject agent = new JsonObject();
         agent.addProperty("name", "Minecraft");
@@ -124,28 +165,90 @@ public final class YggdrasilPasswordFlow {
 
         // ignoreHttpStatus=true：Yggdrasil 的认证失败是标准 JSON 错误体（drasl 一律 403 + error/errorMessage），
         // 若先被网关的状态码校验拦下，就只剩 "HTTP 403"，用户看不到真正原因（也丢了 i18n 提示）。
-        JsonObject json = http.postJson(loginUrl, root, true);
+        JsonObject json = http.postJson(apiRoot + "/authserver/authenticate", root, true);
         throwIfError(json, "accountsx.account.fail.injector_login");
 
         String accessToken = requireAccessToken(json);
-        clientToken = echoedClientToken(json, clientToken);
-        List<YggdrasilProfiles.Profile> profiles = YggdrasilProfiles.readProfiles(json);
+        Profile bound = YggdrasilProfiles.selectedProfile(json);
+        List<Profile> profiles = YggdrasilProfiles.availableProfiles(json);
+        if (profiles.isEmpty() && bound != null) {
+            // 只有 selectedProfile 没有 availableProfiles 是常见形态（服务端已经替用户选好），
+            // 此时候选集就是那一个角色。
+            profiles = List.of(bound);
+        }
+        if (profiles.isEmpty()) {
+            // 令牌有效却一个角色都没有，说明该账号在服务端还没有玩家档案；继续下去只会建出
+            // 一个没有 playerUUID 的账号。
+            throw new InjectorAuthException("accountsx.account.fail.injector_login",
+                    "Yggdrasil response does not contain any player profile.");
+        }
 
-        if (profiles.size() == 1) {
-            YggdrasilProfiles.Profile profile = profiles.get(0);
-            if (wantedPlayer != null && !wantedPlayer.isEmpty() && !wantedPlayer.equals(profile.playerName()))
-                throw new IOException("Player not found.");
-            return withAvatar(http, profileUrl, profile, accessToken, clientToken);
-        }
-        for (YggdrasilProfiles.Profile profile : profiles) {
-            if (profile.playerName().equals(wantedPlayer))
-                return withAvatar(http, profileUrl, profile, accessToken, clientToken);
-        }
-        throw new PlayerNoLongerExistedException("Cannot find player which match " + wantedPlayer);
+        return new LoginDraft(accessToken, echoedClientToken(json, clientToken), List.copyOf(profiles), bound);
     }
 
-    private static YggdrasilAuthResult withAvatar(HttpGateway http, String profileUrl,
-            YggdrasilProfiles.Profile profile, String accessToken, String clientToken) {
+    /**
+     * 第二阶段：把令牌绑定到指定角色。
+     *
+     * <p>Yggdrasil 规范里没有「选角色」端点，唯一的做法是对 {@code /authserver/refresh} 带
+     * {@code selectedProfile} 再刷新一次，服务端据此把令牌绑到该角色并返回绑定后的 accessToken。
+     * 这也是旧实现的缺口：不带 selectedProfile 时服务端只会回未绑定角色，随后无论刷新多少次，
+     * 账号都拿不到确定的角色。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public static YggdrasilAuthResult bind(HttpGateway http, AuthServer server, LoginDraft draft,
+            Profile selected) throws IOException {
+        JsonObject root = new JsonObject();
+        root.addProperty("accessToken", draft.accessToken());
+        root.addProperty("clientToken", draft.clientToken());
+        root.add("selectedProfile", selectedProfileJson(selected));
+
+        // 同认证：要读得到 403 的 error 体，才能区分「令牌过期」与「角色不存在」。
+        JsonObject json = http.postJson(server.apiRoot() + "/authserver/refresh", root, true);
+        throwIfError(json, "accountsx.account.fail.injector_invalid_token");
+
+        String accessToken = requireAccessToken(json);
+        return withAvatar(http, server, selected, accessToken, echoedClientToken(json, draft.clientToken()));
+    }
+
+    /** 服务端已经把令牌绑在该角色上（认证响应带回 {@code selectedProfile}）时，直接组装结果。 */
+    public static YggdrasilAuthResult resultFor(HttpGateway http, AuthServer server, LoginDraft draft,
+            Profile selected) {
+        return withAvatar(http, server, selected, draft.accessToken(), draft.clientToken());
+    }
+
+    /**
+     * 无界面调用方的收尾：绑定唯一角色，多于一个角色时抛 {@link ProfileSelectionRequiredException}。
+     *
+     * <p>不做「按玩家名猜」：旧实现拿空字符串去匹配角色名，多角色账号必然抛
+     * {@code PlayerNoLongerExistedException}，提示「找不到玩家」——真正原因是没让用户选。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public static YggdrasilAuthResult single(HttpGateway http, AuthServer server, LoginDraft draft)
+            throws IOException {
+        Profile profile;
+        if (draft.bound() != null) {
+            profile = draft.bound();
+        } else if (draft.profiles().size() == 1) {
+            profile = draft.profiles().get(0);
+        } else {
+            throw new ProfileSelectionRequiredException(draft.profiles());
+        }
+
+        return draft.isBoundTo(profile)
+                ? resultFor(http, server, draft, profile)
+                : bind(http, server, draft, profile);
+    }
+
+    /** 单角色快捷入口：认证 + 自动选角色 + 绑定。 */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public static YggdrasilAuthResult login(HttpGateway http, AuthServer server, String username,
+            String password) throws IOException {
+        return single(http, server, authenticate(http, server, username, password));
+    }
+
+    private static YggdrasilAuthResult withAvatar(HttpGateway http, AuthServer server, Profile profile,
+            String accessToken, String clientToken) {
+        String profileUrl = server.apiRoot() + "/sessionserver/session/minecraft/profile/";
         AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUuid());
         return new YggdrasilAuthResult(accessToken, profile.playerName(), profile.playerUuid(),
                 null, null, null, clientToken, avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
@@ -175,6 +278,14 @@ public final class YggdrasilPasswordFlow {
         JsonObject root = new JsonObject();
         root.addProperty("accessToken", account.getLoginToken());
         root.addProperty("clientToken", clientToken);
+
+        // 带上 selectedProfile：服务端据此把轮换后的令牌继续绑在「这个账号的玩家」上。
+        // 不带的话，多角色账号刷新回来的令牌与角色脱钩，下一次刷新只能靠猜测角色。
+        String preferredPlayerUUID = account.getPreferredPlayerUUID();
+        if (preferredPlayerUUID != null && !preferredPlayerUUID.isEmpty()) {
+            root.add("selectedProfile", selectedProfileJson(preferredPlayerUUID,
+                    account.getAccountStorage().getPlayerName()));
+        }
 
         // 同上：必须读得到 403 的错误体，才能把「凭据已失效」这类可操作原因告诉用户。
         JsonObject json = http.postJson(refreshUrl, root, true);

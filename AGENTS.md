@@ -89,7 +89,7 @@ AccountsX（根项目 / common）
 │   └── ├── buildSrc/                        # 预编译 Gradle 插件（3 个）
 └── src/main/resources/
     ├── fabric.mod.json              # 核心模组元数据
-    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 59 个 key）
+    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 64 个 key）
     └── assets/accountsx/textures/gui/  # GUI 资源单一数据源：account.png（切换图标）、
                                         #  sprites/icon/account.png（标题屏精灵）、alex_avatar.png（默认头像）
 ```
@@ -122,7 +122,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
   - `OFFLINE`（configId: `"offline"`）
   - `MICROSOFT`（configId: `"microsoft"`）— device-code OAuth
   - `AUTHLIB_INJECTOR`（configId: `"injector.authlib-injector"`）— 第三方 Yggdrasil
-- Provider 实现 `refresh` / `createAccountContext`，以及该类型自己的建号方法（外置认证 `loginPassword` / `loginDeviceCode`、离线 `login(name, uuid)`、微软 `requestDeviceCode` / `loginDeviceCode`）
+- Provider 实现 `refresh` / `createAccountContext`，以及该类型自己的建号方法（外置认证 `loginPasswordDraft` / `loginPasswordSelected` / `loginPassword` / `loginDeviceCode`、离线 `login(name, uuid)`、微软 `requestDeviceCode` / `loginDeviceCode`）
 - 登录上下文是 `AccountContext(AuthServerContext, AuthSecurityContext, AuthPolicy)`，用于构建 authlib session
 
 ### 运行时流程
@@ -133,6 +133,8 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 4. 登录/刷新/保存在 **`TaskScheduler`**（`common/task/`：串行阻塞队列 + 上限 4 的有界并行池）上运行；并行刷新由 `TaskScheduler.runParallel` 调度
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
 6. 删除正在使用的账号：仓储把 current 指针落回默认账号（`ENV_DEFAULT`，即启动器会话），随后 Manager 在 worker 上登录它、在客户端线程上切回会话——与会话切换同一条链路；没有环境账号可回落时指针清空、游戏会话维持原样
+
+外置认证的密码登录分两段：先 `/authserver/authenticate` 只拿令牌与角色清单，用户在界面上勾选角色（单角色或服务端已 bound 时跳过）后，再对每个角色发一次带 `selectedProfile` 的 `/authserver/refresh` 完成绑定——一个账号有几个角色就建几个账号，全部入库后只切换第一个。Yggdrasil 没有独立的「选角色」端点，绑定只能靠 refresh；而刷新时也带 `selectedProfile`（取账号的 preferredPlayerUUID），否则服务端不知道该把令牌绑回哪个角色。
 
 `@Threading.Thread` 文档标注预期线程；`Threading.checkMinecraftClientThread()` / `checkAccountWorkerThread()` 强制执行。不要在 worker 线程外调用 profile 修改 API。
 

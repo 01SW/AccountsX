@@ -16,9 +16,11 @@ import top.syshub.accountsx.common.auth.YggdrasilAuthResult;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow.DeviceCode;
 import top.syshub.accountsx.common.auth.YggdrasilPasswordFlow;
+import top.syshub.accountsx.common.auth.YggdrasilProfiles;
 import top.syshub.accountsx.common.net.HttpGateway;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -97,9 +99,44 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
                 YggdrasilDeviceCodeFlow.cancellableSleep(cancelled), cancelled));
     }
 
-    /** 新登录界面：用户名 + 密码直接换账号。 */
+    /**
+     * 新登录界面：用户名 + 密码只换到「认证结果」，不决定角色。
+     *
+     * <p>一个账号在服务端可能有多个角色，绑哪个必须由用户选，所以这里先把
+     * {@link YggdrasilPasswordFlow.LoginDraft} 交给界面：单角色（或服务端已选定）时界面直接调
+     * {@link #loginPasswordSelected}，多角色时先让用户勾选。</p>
+     */
+    public YggdrasilPasswordFlow.LoginDraft loginPasswordDraft(AuthServer server, String username,
+            String password) throws IOException {
+        return YggdrasilPasswordFlow.authenticate(http, server, username, password);
+    }
+
+    /**
+     * 为每个选中角色各建一个账号。
+     *
+     * <p>{@code /authserver/refresh} 一次只能绑定一个角色，绑定后令牌就属于那个角色了，所以除第一个
+     * 复用 {@code draft} 外，其余角色都要重新认证一次再绑定——这也是界面只在这一步暂存用户名/密码、
+     * 关闭界面立刻清空的原因。</p>
+     */
+    public List<T> loginPasswordSelected(AuthServer server, String username, String password,
+            YggdrasilPasswordFlow.LoginDraft draft, List<YggdrasilProfiles.Profile> selected) throws IOException {
+        List<T> accounts = new ArrayList<>(selected.size());
+        for (int i = 0; i < selected.size(); i++) {
+            YggdrasilProfiles.Profile profile = selected.get(i);
+            YggdrasilPasswordFlow.LoginDraft current = i == 0
+                    ? draft
+                    : YggdrasilPasswordFlow.authenticate(http, server, username, password);
+            YggdrasilAuthResult result = current.isBoundTo(profile)
+                    ? YggdrasilPasswordFlow.resultFor(http, server, current, profile)
+                    : YggdrasilPasswordFlow.bind(http, server, current, profile);
+            accounts.add(toAccount(server, result));
+        }
+        return accounts;
+    }
+
+    /** 单角色快捷入口（无界面的调用方）：认证 + 自动绑定第一个角色。 */
     public T loginPassword(AuthServer server, String username, String password) throws IOException {
-        return toAccount(server, YggdrasilPasswordFlow.login(http, server, username, password, ""));
+        return toAccount(server, YggdrasilPasswordFlow.login(http, server, username, password));
     }
 
     @Override

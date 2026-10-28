@@ -1,7 +1,7 @@
 {
   "accountsx.account.fail.injector_login": "External login failed. Check the auth server address, user ID, and password.",
   "accountsx.account.fail.injector_invalid_token": "This external login account's credential has expired. Remove it and add it again.",
-  "accountsx.account.fail.player_no_longer_existed": "Cannot find a matched player!",
+  "accountsx.account.fail.select_profile": "This account has multiple profiles; choose one to add.",
   "accountsx.account.fail.startup_refresh": "%d account(s) could not be refreshed at startup. Sign them in again from the list; if that still fails, remove and re-add them.",
   "accountsx.account.fail.title": "Account Operation Failed",
   "accountsx.account.fail.unknown": "Unknown exceptions have occurred. Please check the logs or seek help.",
@@ -58,5 +58,9 @@
   "accountsx.account.external.copy_link": "Copy Login Link",
   "accountsx.account.general.current_account": "Current account: %s",
   "accountsx.account.general.current_account.none": "Current account: none",
-  "accountsx.account.general.remove_auth_server": "Remove Auth Server"
+  "accountsx.account.general.remove_auth_server": "Remove Auth Server",
+  "accountsx.account.external.username.hint": "Email or player ID",
+  "accountsx.account.external.select_profile": "Select the profiles to add",
+  "accountsx.account.external.select_profile.confirm": "Add Selected",
+  "accountsx.account.external.select_profile.none": "Select at least one profile"
 }

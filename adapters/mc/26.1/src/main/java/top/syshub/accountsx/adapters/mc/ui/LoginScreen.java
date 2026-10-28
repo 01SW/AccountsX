@@ -73,12 +73,32 @@ abstract class LoginScreen extends Screen {
 
     /** 登录成功：入库、让父界面的列表跟上，然后回到父界面。 */
     protected final void finish(BaseAccount account) {
-        AccountManager.addAccount(account);
+        this.finish(java.util.List.of(account));
+    }
+
+    /**
+     * 登录成功（可能一次产出多个账号）：全部入库，只切换第一个。
+     *
+     * <p>多角色账号里用户勾了几个就建几个，其余留给列表手动切换——每个都自动切一次没有意义，
+     * 切账号会重连，回回都断线。切换放在 {@link #onClose()} 之后：界面已经没用了，
+     * 而重连过程中留着它会挡住游戏画面。{@code onSwitched} 传空回调是因为
+     * {@link AccountManager#selectAccount} 在「已是当前账号」的分支上也会直接调用它。</p>
+     */
+    protected final void finish(java.util.List<? extends BaseAccount> accounts) {
+        if (accounts.isEmpty()) {
+            return;
+        }
+        for (BaseAccount account : accounts) {
+            AccountManager.addAccount(account);
+        }
         Screen parentScreen = this.parent;
         if (parentScreen instanceof AccountScreen accountScreen) {
             accountScreen.syncAccounts();
         }
+        BaseAccount first = accounts.get(0);
         this.onClose();
+        AccountManager.selectAccount(first, () -> {
+        });
     }
 
     protected static Component failText(Exception e) {
