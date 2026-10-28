@@ -123,7 +123,7 @@ public class ServerScreen extends Screen {
 
         context.drawCenteredString(this.font, this.title, this.width / 2, this.height / 2 - 60, 0xFFFFFFFF);
         if (this.status != null) {
-            context.drawCenteredString(this.font, this.status, this.width / 2, this.height / 2 + 10, 0xFFA0A0A0);
+            context.drawCenteredString(this.font, this.status, this.width / 2, this.height / 2 + 26, 0xFFA0A0A0);
         }
     }
 }
