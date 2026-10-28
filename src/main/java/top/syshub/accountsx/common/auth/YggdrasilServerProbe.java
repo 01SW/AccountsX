@@ -143,11 +143,14 @@ public final class YggdrasilServerProbe {
         String device = str(config.get("device_authorization_endpoint"));
         String token = str(config.get("token_endpoint"));
         String userinfo = str(config.get("userinfo_endpoint"));
+        // issuer / jwks_uri 只服务于 id_token 校验：没有它们就无法确认令牌的签发者与签名密钥。
+        String issuer = str(config.get("issuer"));
+        String jwks = str(config.get("jwks_uri"));
         if (clientId == null)
             clientId = sharedClientId(config);
         if (clientId == null)
             return null;
-        return new OAuthEndpoints(clientId, token, device, userinfo);
+        return new OAuthEndpoints(clientId, token, device, userinfo, issuer, jwks);
     }
 
     static PublicKey parseSignaturePublicKey(String pem)

@@ -105,8 +105,13 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
     @Override
     public final void refresh(T account) throws IOException {
         if (AccountOAuth.isEnvelope(account.getLoginToken())) {
+            // 校验 id_token 需要该服务器的 issuer / jwks_uri，只能从注册表拿完整条目。
+            AuthServerRegistry servers = registry();
+            AuthServer server = servers == null ? null : servers.byApiRoot(account.getServer());
+            if (server == null)
+                throw new IOException("认证服务器不在列表中，无法刷新账号: " + account.getServer());
             YggdrasilAuthResult result = YggdrasilDeviceCodeFlow.refresh(http,
-                    account.getLoginToken().substring(AccountOAuth.PREFIX.length()), account.getServer());
+                    account.getLoginToken().substring(AccountOAuth.PREFIX.length()), server);
             account.setProfile(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()));
             account.setLoginProfile(AccountOAuth.envelope(result.refreshToken(), result.tokenEndpoint(), result.clientId()),
                     result.playerUuid());

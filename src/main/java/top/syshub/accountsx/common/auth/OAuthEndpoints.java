@@ -6,10 +6,20 @@ import com.google.gson.JsonPrimitive;
 
 /**
  * OAuth 端点集（servers[].oauth）。3→4 迁移只种 {@code clientId} / {@code tokenEndpoint}；
- * device / userinfo 端点由首次探测（本类 {@link #mergedWith} 的 probe 侧）补全，逐字段谁有谁留。
+ * device / userinfo / issuer / jwks 端点由探测（本类 {@link #mergedWith} 的 probe 侧）补全，逐字段谁有谁留。
+ *
+ * <p>{@code issuer} 与 {@code jwksUri} 来自 YGGC（Yggdrasil Connect）的 openid 配置，只用于校验
+ * id_token 的签发者与签名密钥——少了它们就无从确认「这张令牌是不是这台服务器发给我的」。</p>
  */
 public record OAuthEndpoints(String clientId, String tokenEndpoint, String deviceAuthorizationEndpoint,
-        String userinfoEndpoint) {
+        String userinfoEndpoint, String issuer, String jwksUri) {
+
+    /** 只关心四个端点时的便捷构造（迁移、测试与旧调用点用不到签发信息）。 */
+    public OAuthEndpoints(String clientId, String tokenEndpoint, String deviceAuthorizationEndpoint,
+            String userinfoEndpoint) {
+        this(clientId, tokenEndpoint, deviceAuthorizationEndpoint, userinfoEndpoint, null, null);
+    }
+
     static String str(JsonElement e) {
         return e instanceof JsonPrimitive p && p.isString() ? p.getAsString() : null;
     }
@@ -21,9 +31,12 @@ public record OAuthEndpoints(String clientId, String tokenEndpoint, String devic
         String tokenEndpoint = str(jo.get("tokenEndpoint"));
         String device = str(jo.get("deviceAuthorizationEndpoint"));
         String userinfo = str(jo.get("userinfoEndpoint"));
-        if (clientId == null && tokenEndpoint == null && device == null && userinfo == null)
+        String issuer = str(jo.get("issuer"));
+        String jwks = str(jo.get("jwksUri"));
+        if (clientId == null && tokenEndpoint == null && device == null && userinfo == null
+                && issuer == null && jwks == null)
             return null;
-        return new OAuthEndpoints(clientId, tokenEndpoint, device, userinfo);
+        return new OAuthEndpoints(clientId, tokenEndpoint, device, userinfo, issuer, jwks);
     }
 
     public JsonObject toJson() {
@@ -36,6 +49,10 @@ public record OAuthEndpoints(String clientId, String tokenEndpoint, String devic
             jo.addProperty("deviceAuthorizationEndpoint", deviceAuthorizationEndpoint);
         if (userinfoEndpoint != null)
             jo.addProperty("userinfoEndpoint", userinfoEndpoint);
+        if (issuer != null)
+            jo.addProperty("issuer", issuer);
+        if (jwksUri != null)
+            jo.addProperty("jwksUri", jwksUri);
         return jo;
     }
 
@@ -47,7 +64,9 @@ public record OAuthEndpoints(String clientId, String tokenEndpoint, String devic
                 clientId != null ? clientId : other.clientId(),
                 tokenEndpoint != null ? tokenEndpoint : other.tokenEndpoint(),
                 deviceAuthorizationEndpoint != null ? deviceAuthorizationEndpoint : other.deviceAuthorizationEndpoint(),
-                userinfoEndpoint != null ? userinfoEndpoint : other.userinfoEndpoint());
+                userinfoEndpoint != null ? userinfoEndpoint : other.userinfoEndpoint(),
+                issuer != null ? issuer : other.issuer(),
+                jwksUri != null ? jwksUri : other.jwksUri());
     }
 
     public static OAuthEndpoints merge(OAuthEndpoints a, OAuthEndpoints b) {

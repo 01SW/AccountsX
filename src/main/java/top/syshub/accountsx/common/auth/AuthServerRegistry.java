@@ -231,7 +231,7 @@ public final class AuthServerRegistry {
         OAuthEndpoints merged = oauth == null
                 ? new OAuthEndpoints(clientId, null, null, null)
                 : new OAuthEndpoints(clientId, oauth.tokenEndpoint(), oauth.deviceAuthorizationEndpoint(),
-                        oauth.userinfoEndpoint());
+                        oauth.userinfoEndpoint(), oauth.issuer(), oauth.jwksUri());
         return new AuthServer(probed.apiRoot(), probed.kind(), probed.displayName(), merged, probed.cachedAt());
     }
 

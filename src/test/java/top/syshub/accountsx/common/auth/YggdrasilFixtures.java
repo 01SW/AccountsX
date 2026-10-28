@@ -49,6 +49,9 @@ final class YggdrasilFixtures {
         config.addProperty("token_endpoint", apiRoot + "/oauth/token");
         config.addProperty("userinfo_endpoint", apiRoot + "/oauth/userinfo");
         config.addProperty("shared_client_id", "fake-shared-client");
+        // id_token 验签要用：issuer 校验 iss，jwks_uri 取签名公钥
+        config.addProperty("issuer", apiRoot);
+        config.addProperty("jwks_uri", apiRoot + "/oauth/jwks");
         return config;
     }
 

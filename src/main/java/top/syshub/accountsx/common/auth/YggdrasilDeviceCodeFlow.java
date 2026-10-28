@@ -5,7 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import java.io.IOException;
-import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import top.syshub.accountsx.common.net.HttpGateway;
@@ -125,7 +125,7 @@ public final class YggdrasilDeviceCodeFlow {
         if (accessToken == null)
             throw new IOException("Timed out waiting for authorization.");
 
-        return toResult(http, server.apiRoot(), accessToken, refreshToken, idToken,
+        return toResult(http, server, accessToken, refreshToken, idToken,
                 code.tokenEndpoint(), code.clientId());
     }
 
@@ -150,7 +150,7 @@ public final class YggdrasilDeviceCodeFlow {
 
     /** OAuth 刷新（信封 JSON 即 loginToken 去掉前缀的部分）。 */
     @Threading.Thread(Threading.ThreadRole.WORKER)
-    public static YggdrasilAuthResult refresh(HttpGateway http, String envelopeJson, String apiRoot)
+    public static YggdrasilAuthResult refresh(HttpGateway http, String envelopeJson, AuthServer server)
             throws IOException {
         JsonObject envelope = JsonParser.parseString(envelopeJson).getAsJsonObject();
         String tokenEndpoint = envelope.get("token_endpoint").getAsString();
@@ -173,16 +173,16 @@ public final class YggdrasilDeviceCodeFlow {
         // 不返回就沿用信封里的旧值，否则一次成功刷新会把账号变成再也刷不动的死账号。
         String rotated = optionalString(token, "refresh_token");
 
-        return toResult(http, apiRoot, accessToken, rotated != null ? rotated : refreshToken, idToken,
+        return toResult(http, server, accessToken, rotated != null ? rotated : refreshToken, idToken,
                 tokenEndpoint, clientId);
     }
 
-    /** token 响应 → 账号数据：id_token 给身份，sessionserver 给头像。 */
-    private static YggdrasilAuthResult toResult(HttpGateway http, String apiRoot, String accessToken,
+    /** token 响应 → 账号数据：id_token 给身份（先验签与声明），sessionserver 给头像。 */
+    private static YggdrasilAuthResult toResult(HttpGateway http, AuthServer server, String accessToken,
             String refreshToken, String idToken, String tokenEndpoint, String clientId) throws IOException {
-        YggdrasilProfiles.Profile profile = readIdTokenProfile(idToken);
+        YggdrasilProfiles.Profile profile = readIdTokenProfile(http, server, idToken);
         AvatarService.AvatarKey avatar = AvatarService.fetch(http,
-                apiRoot + "/sessionserver/session/minecraft/profile/", profile.playerUuid());
+                server.apiRoot() + "/sessionserver/session/minecraft/profile/", profile.playerUuid());
         return new YggdrasilAuthResult(accessToken, profile.playerName(), profile.playerUuid(),
                 refreshToken, tokenEndpoint, clientId,
                 // OAuth 账号走 OAuth 刷新端点，不使用 Yggdrasil clientToken。
@@ -190,13 +190,18 @@ public final class YggdrasilDeviceCodeFlow {
                 avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
     }
 
-    static YggdrasilProfiles.Profile readIdTokenProfile(String idToken) throws IOException {
-        String[] parts = idToken.split("\\.");
-        if (parts.length < 2)
-            throw new IOException("Invalid id token.");
-        String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
-        JsonObject userinfo = JsonParser.parseString(payload).getAsJsonObject();
-        return YggdrasilProfiles.readProfiles(userinfo).get(0);
+    /**
+     * 从 id_token 取角色：校验签名与 iss/aud/iat/exp 之后才读 claims。
+     *
+     * <p>校验失败即抛 {@link IOException}——未经验证的令牌不能决定「我登录的是谁」。</p>
+     */
+    static YggdrasilProfiles.Profile readIdTokenProfile(HttpGateway http, AuthServer server, String idToken)
+            throws IOException {
+        JsonObject claims = IdTokenVerifier.verify(http, server, idToken);
+        List<YggdrasilProfiles.Profile> profiles = YggdrasilProfiles.readProfiles(claims);
+        if (profiles.isEmpty())
+            throw new IOException("id token carries no profile.");
+        return profiles.get(0);
     }
 
     /**

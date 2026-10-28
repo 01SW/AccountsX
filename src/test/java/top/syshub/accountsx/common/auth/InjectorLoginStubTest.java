@@ -6,8 +6,13 @@ import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.Signature;
+import java.security.interfaces.RSAPublicKey;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +42,8 @@ class InjectorLoginStubTest {
     private String base;
     private String apiRoot;
     private final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+    /** id_token 用本地私钥真实签名，公钥经 stub 的 jwks 端点发布（验签是硬性要求，不能拿明文假令牌糊过去）。 */
+    private KeyPair keyPair;
 
     private static void bump(Map<String, AtomicInteger> hits, String key) {
         hits.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
@@ -47,7 +54,8 @@ class InjectorLoginStubTest {
     }
 
     @BeforeEach
-    void startStub() throws IOException {
+    void startStub() throws Exception {
+        keyPair = KeyPairGenerator.getInstance("RSA").genKeyPair();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         base = "http://127.0.0.1:" + server.getAddress().getPort();
         apiRoot = base + "/api/yggdrasil";
@@ -71,6 +79,7 @@ class InjectorLoginStubTest {
                     }
                 }
                 case "GET /api/yggdrasil/.well-known/openid" -> body = YggdrasilFixtures.openidConfig(apiRoot);
+                case "GET /api/yggdrasil/oauth/jwks" -> body = jwks();
                 case "POST /api/yggdrasil/authserver/authenticate" -> body = YggdrasilFixtures.profile("Steve", UUID32);
                 case "POST /api/yggdrasil/oauth/device" -> {
                     body = new JsonObject();
@@ -85,6 +94,8 @@ class InjectorLoginStubTest {
                     body.addProperty("access_token", "fake-access2");
                     body.addProperty("refresh_token", "fake-refresh2");
                     body.addProperty("id_token", fakeIdToken());
+                    body.addProperty("token_type", "Bearer");
+                    body.addProperty("expires_in", 3600);
                 }
                 case "GET /api/yggdrasil/sessionserver/session/minecraft/profile/" + UUID32 -> {
                     body = new JsonObject();
@@ -113,12 +124,48 @@ class InjectorLoginStubTest {
         /* registry cleaned up by test teardown */
     }
 
-    private static String fakeIdToken() {
+    /** 签一张 kid=fake-kid 的 id_token，claims 与真实 YGGC 响应同形（iss/aud/iat/exp 全齐）。 */
+    private String fakeIdToken() throws IOException {
         Base64.Encoder enc = Base64.getUrlEncoder().withoutPadding();
-        String header = enc.encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
-        String payload = enc.encodeToString(("{\"availableProfiles\":[{\"name\":\"Alex\",\"id\":\""
-                + UUID32 + "\"}]}").getBytes(StandardCharsets.UTF_8));
-        return header + "." + payload + ".fakesig";
+        long now = System.currentTimeMillis() / 1000L;
+        String header = enc.encodeToString(("{\"alg\":\"RS256\",\"typ\":\"JWT\",\"kid\":\"fake-kid\"}")
+                .getBytes(StandardCharsets.UTF_8));
+        String payload = enc.encodeToString(("{\"iss\":\"" + apiRoot + "\",\"aud\":\"fake-shared-client\","
+                + "\"sub\":\"fake-user\",\"iat\":" + now + ",\"exp\":" + (now + 3600) + ",\"availableProfiles\":"
+                + "[{\"name\":\"Alex\",\"id\":\"" + UUID32 + "\"}]}").getBytes(StandardCharsets.UTF_8));
+        return header + "." + payload + "." + sign(header + "." + payload);
+    }
+
+    private String sign(String signingInput) throws IOException {
+        try {
+            Signature signature = Signature.getInstance("SHA256withRSA");
+            signature.initSign(keyPair.getPrivate());
+            signature.update(signingInput.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(signature.sign());
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    private JsonObject jwks() {
+        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+        JsonObject jwk = new JsonObject();
+        jwk.addProperty("kty", "RSA");
+        jwk.addProperty("kid", "fake-kid");
+        jwk.addProperty("n", unsigned(publicKey.getModulus()));
+        jwk.addProperty("e", unsigned(publicKey.getPublicExponent()));
+        JsonArray keys = new JsonArray();
+        keys.add(jwk);
+        JsonObject document = new JsonObject();
+        document.add("keys", keys);
+        return document;
+    }
+
+    private static String unsigned(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        if (bytes.length > 1 && bytes[0] == 0)
+            bytes = java.util.Arrays.copyOfRange(bytes, 1, bytes.length);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     @Test
@@ -178,7 +225,9 @@ class InjectorLoginStubTest {
 
     @Test
     void oauthRefresh_rotatesEnvelope() throws Exception {
-        String envelope = AccountOAuth.envelope("fake-refresh", apiRoot + "/oauth/token", "fake-shared-client");
+        // 刷新要验 id_token 的发行方与签名：这两项来自注册表条目（加服时探测得到）
+        AuthServer server = registry.add(AuthServerKind.YGGDRASIL, base);
+        String envelope = AccountOAuth.envelope("fake-refresh", server.oauth().tokenEndpoint(), "fake-shared-client");
         AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = new AuthlibInjectorAccountProvider.AuthlibInjectorAccount(
                 "fake-access", "Alex", java.util.UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5"),
                 apiRoot, UUID32, "FakeInjector", null, 0L);

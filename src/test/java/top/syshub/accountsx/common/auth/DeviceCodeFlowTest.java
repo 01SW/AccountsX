@@ -6,8 +6,14 @@ import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.Signature;
+import java.security.interfaces.RSAPublicKey;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -24,7 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 两步式 device-code（P5 外置登录界面所用 API）：取码与轮询分离，取消可打断。
- * fixture 一律 fake- 前缀，无任何真实凭据。
+ * fixture 一律 fake- 前缀，无任何真实凭据；id_token 用本地生成的 RSA 密钥对真实签名，
+ * 公钥经 stub 的 jwks 端点发布。
  */
 class DeviceCodeFlowTest {
     private static final String UUID32 = "069a79f444e94726a5befca90e38aaf5";
@@ -32,6 +39,10 @@ class DeviceCodeFlowTest {
     private HttpServer server;
     private String base;
     private String apiRoot;
+    private String jwksUri;
+    /** 签名用密钥对；被测试替换成「别人的私钥」时，jwks 仍发布原公钥。 */
+    private KeyPair keyPair;
+    private KeyPair jwksKeyPair;
     private AuthServer authServer;
     private final AtomicInteger deviceHits = new AtomicInteger();
     private final AtomicInteger tokenHits = new AtomicInteger();
@@ -43,10 +54,13 @@ class DeviceCodeFlowTest {
     private volatile boolean omitRefreshToken;
 
     @BeforeEach
-    void startStub() throws IOException {
+    void startStub() throws Exception {
+        keyPair = KeyPairGenerator.getInstance("RSA").genKeyPair();
+        jwksKeyPair = keyPair;
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         base = "http://127.0.0.1:" + server.getAddress().getPort();
         apiRoot = base + "/api/yggdrasil";
+        jwksUri = apiRoot + "/oauth/jwks";
 
         server.createContext("/", exchange -> {
             String key = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
@@ -77,12 +91,13 @@ class DeviceCodeFlowTest {
                             body.addProperty("access_token", "fake-access2");
                             if (!omitRefreshToken)
                                 body.addProperty("refresh_token", "fake-refresh2");
-                            body.addProperty("id_token", fakeIdToken());
+                            body.addProperty("id_token", idToken());
                             body.addProperty("token_type", "Bearer");
                             body.addProperty("expires_in", 3600);
                         }
                     }
                 }
+                case "GET /api/yggdrasil/oauth/jwks" -> body = jwks();
                 case "GET /api/yggdrasil/sessionserver/session/minecraft/profile/" + UUID32 -> {
                     body = new JsonObject();
                     body.add("properties", new JsonArray());
@@ -103,7 +118,9 @@ class DeviceCodeFlowTest {
         AuthServerRegistry registry = new AuthServerRegistry(JdkHttpGateway.INSTANCE);
         AbstractInjectorAccountProvider.installRegistry(registry);
         authServer = new AuthServer(apiRoot, AuthServerKind.YGGDRASIL, "FakeInjector",
-                new OAuthEndpoints("fake-shared-client", apiRoot + "/oauth/token", apiRoot + "/oauth/device", null), 0L);
+                new OAuthEndpoints("fake-shared-client", apiRoot + "/oauth/token", apiRoot + "/oauth/device", null,
+                        apiRoot, jwksUri),
+                0L);
     }
 
     @AfterEach
@@ -111,12 +128,49 @@ class DeviceCodeFlowTest {
         server.stop(0);
     }
 
-    private static String fakeIdToken() {
+    /** 用本地私钥签一张 kid=fake-kid 的 id_token，claims 与真实 YGGC 响应同形。 */
+    private String idToken() throws IOException {
         Base64.Encoder enc = Base64.getUrlEncoder().withoutPadding();
-        String header = enc.encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
-        String payload = enc.encodeToString(("{\"availableProfiles\":[{\"name\":\"Alex\",\"id\":\""
-                + UUID32 + "\"}]}").getBytes(StandardCharsets.UTF_8));
-        return header + "." + payload + ".fakesig";
+        long now = System.currentTimeMillis() / 1000L;
+        String header = enc.encodeToString(("{\"alg\":\"RS256\",\"typ\":\"JWT\",\"kid\":\"fake-kid\"}")
+                .getBytes(StandardCharsets.UTF_8));
+        String payload = enc.encodeToString(("{\"iss\":\"" + apiRoot + "\",\"aud\":\"fake-shared-client\","
+                + "\"sub\":\"fake-user\",\"iat\":" + now + ",\"exp\":" + (now + 3600) + ",\"availableProfiles\":"
+                + "[{\"name\":\"Alex\",\"id\":\"" + UUID32 + "\"}]}")
+                .getBytes(StandardCharsets.UTF_8));
+        return header + "." + payload + "." + sign(header + "." + payload);
+    }
+
+    private String sign(String signingInput) throws IOException {
+        try {
+            Signature signature = Signature.getInstance("SHA256withRSA");
+            signature.initSign(keyPair.getPrivate());
+            signature.update(signingInput.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(signature.sign());
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    private JsonObject jwks() {
+        RSAPublicKey publicKey = (RSAPublicKey) jwksKeyPair.getPublic();
+        JsonObject jwk = new JsonObject();
+        jwk.addProperty("kty", "RSA");
+        jwk.addProperty("kid", "fake-kid");
+        jwk.addProperty("n", unsigned(publicKey.getModulus()));
+        jwk.addProperty("e", unsigned(publicKey.getPublicExponent()));
+        JsonObject document = new JsonObject();
+        JsonArray keys = new JsonArray();
+        keys.add(jwk);
+        document.add("keys", keys);
+        return document;
+    }
+
+    private static String unsigned(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        if (bytes.length > 1 && bytes[0] == 0)
+            bytes = Arrays.copyOfRange(bytes, 1, bytes.length);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     @Test
@@ -179,6 +233,23 @@ class DeviceCodeFlowTest {
     }
 
     @Test
+    void loginDeviceCode_rejectsIdTokenSignedByAnotherKey() throws Exception {
+        // 同一台服务器、同一端点，但令牌是别人用自己的私钥签的：一律拒绝。
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(JdkHttpGateway.INSTANCE);
+        KeyPair other = KeyPairGenerator.getInstance("RSA").genKeyPair();
+        KeyPair original = keyPair;
+        keyPair = other;
+        try {
+            YggdrasilDeviceCodeFlow.DeviceCode code = provider.fetchDeviceCode(authServer);
+            assertThatThrownBy(() -> TaskScheduler.submit(
+                    () -> provider.loginDeviceCode(authServer, code, () -> false)).get())
+                    .hasRootCauseMessage("id token signature does not match any published key (kid=fake-kid)");
+        } finally {
+            keyPair = original;
+        }
+    }
+
+    @Test
     void awaitToken_missingRefreshTokenReportsFieldName() throws Exception {
         omitRefreshToken = true;
         YggdrasilDeviceCodeFlow.DeviceCode code =
@@ -197,7 +268,7 @@ class DeviceCodeFlowTest {
         String envelope = AccountOAuth.envelope("fake-refresh1", apiRoot + "/oauth/token", "fake-shared-client")
                 .substring(AccountOAuth.PREFIX.length());
 
-        assertThatThrownBy(() -> YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, apiRoot))
+        assertThatThrownBy(() -> YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, authServer))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("invalid_grant")
                 .hasMessageContaining("refresh token was revoked");
@@ -211,7 +282,7 @@ class DeviceCodeFlowTest {
         String envelope = AccountOAuth.envelope("fake-refresh1", apiRoot + "/oauth/token", "fake-shared-client")
                 .substring(AccountOAuth.PREFIX.length());
 
-        YggdrasilAuthResult result = YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, apiRoot);
+        YggdrasilAuthResult result = YggdrasilDeviceCodeFlow.refresh(JdkHttpGateway.INSTANCE, envelope, authServer);
 
         assertThat(result.accessToken()).isEqualTo("fake-access2");
         assertThat(result.refreshToken()).isEqualTo("fake-refresh1");
