@@ -139,6 +139,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 
 - 配置文件：`~/.config/accountsx.json`（v4：`version` / `servers` / `accounts`；可用 `ACCOUNTSX_CONFIG` 覆盖，`$XDG_CONFIG_HOME` 次之）。
 - `JsonConfigStore` 原子写；读取或迁移失败时备份并进入只读降级，保存被丢弃。
+- `servers` 里的外置认证服务器条目是账号的登录端点、公钥与 skinDomains 来源；移除条目时连带删除属于它的账号（`AccountRepository.dropAccountsOn`），否则这些账号既登录不了也刷新不了。
 - 旧版本按 `StandardMigrations` 链升级并回写；未知账号条目跳过但保留。
 - `ENV_DEFAULT` 账号不写入磁盘
 - 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
