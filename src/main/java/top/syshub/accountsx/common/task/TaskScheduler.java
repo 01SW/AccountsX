@@ -2,6 +2,7 @@ package top.syshub.accountsx.common.task;
 
 import org.jspecify.annotations.NonNull;
 import top.syshub.accountsx.common.AccountsX;
+import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
 import top.syshub.accountsx.common.accounts.model.PlayerNoLongerExistedException;
 import top.syshub.accountsx.common.adapters.Platforms;
 
@@ -199,6 +200,9 @@ public final class TaskScheduler {
     private static String failureMessage(Throwable t) {
         if (t instanceof PlayerNoLongerExistedException) {
             return "accountsx.account.fail.player_no_longer_existed";
+        }
+        if (t instanceof InjectorAuthException e) {
+            return e.getTranslationKey();
         }
         return "accountsx.account.fail.unknown";
     }

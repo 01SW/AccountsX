@@ -390,6 +390,8 @@ public final class AccountRepository {
                         str(jo.get("accountName")), avatarKey, 0L);
                 if (envelope != null)
                     account.setLoginTokenForMigration("OAuth " + envelope, uuid32(str(profile.get("uuid"))));
+                // 旧版本创建的账号没有这个字段：留 null，刷新时给出「请重新添加」的可操作提示。
+                account.setClientTokenForMigration(str(credentials.get("clientToken")));
                 yield account;
             }
             default -> null;
@@ -519,6 +521,8 @@ public final class AccountRepository {
             } else if (storage.getAccessToken() != null) {
                 credentials.addProperty("accessToken", storage.getAccessToken());
             }
+            if (injectorAccount.getClientToken() != null)
+                credentials.addProperty("clientToken", injectorAccount.getClientToken());
         } else if (storage.getAccessToken() != null) {
             credentials.addProperty("accessToken", storage.getAccessToken());
         }

@@ -115,10 +115,12 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
         YggdrasilPasswordFlow.refresh(http, account);
     }
 
-    /** 三种登录入口共用的落地映射：建账号 + 有 refresh_token 就写 OAuth 信封。 */
+    /** 三种登录入口共用的落地映射：建账号 + clientToken + 有 refresh_token 就写 OAuth 信封。 */
     private T toAccount(AuthServer server, YggdrasilAuthResult result) {
         T account = createAccount(result.accessToken(), result.playerName(), AccountUUID.parse(result.playerUuid()),
                 server.apiRoot(), result.playerUuid(), server.displayName(), result.avatarKey(), result.avatarCachedAt());
+        if (result.clientToken() != null)
+            account.setClientToken(result.clientToken());
         if (result.refreshToken() != null)
             account.setLoginProfile(AccountOAuth.envelope(result.refreshToken(), result.tokenEndpoint(), result.clientId()),
                     result.playerUuid());

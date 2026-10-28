@@ -177,6 +177,8 @@ public final class YggdrasilDeviceCodeFlow {
                 apiRoot + "/sessionserver/session/minecraft/profile/", profile.playerUuid());
         return new YggdrasilAuthResult(accessToken, profile.playerName(), profile.playerUuid(),
                 refreshToken, tokenEndpoint, clientId,
+                // OAuth 账号走 OAuth 刷新端点，不使用 Yggdrasil clientToken。
+                null,
                 avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
     }
 

@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * P1.3 安全网：证明网络层已可注入 —— 认证流程可在单测中用假 {@link HttpGateway} 驱动，
@@ -30,6 +31,7 @@ class HttpGatewayInjectionTest {
     private static final String SERVER = "https://ygg.invalid/api/yggdrasil";
     private static final String REFRESH_URL = SERVER + "/authserver/refresh";
     private static final String NEW_TOKEN = "new-injector-token";
+    private static final String CLIENT_TOKEN = "0123456789abcdef0123456789abcdef";
     private static final String NEW_NAME = "Steve";
     private static final UUID NEW_UUID = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
 
@@ -109,6 +111,7 @@ class HttpGatewayInjectionTest {
                 "old-injector-token", "OldName", UUID.randomUUID(),
                 SERVER, UUID.randomUUID().toString(), null, null, 0L
         );
+        account.setClientTokenForMigration(CLIENT_TOKEN);
 
         // refresh 内的 setLoginProfile/setProfile 要求 worker 线程，故经调度器在 worker 线程上执行。
         TaskScheduler.submitParallel(() -> provider.refresh(account)).get();
@@ -117,10 +120,30 @@ class HttpGatewayInjectionTest {
         assertThat(account.getAccountStorage().getPlayerName()).isEqualTo(NEW_NAME);
         assertThat(account.getAccountStorage().getPlayerUUID()).isEqualTo(NEW_UUID);
 
-        // 断言刷新确实打到了正确的 refresh 端点，且 body 带旧令牌。
+        // 断言刷新确实打到了正确的 refresh 端点，且 body 同时带旧令牌与 clientToken
+        // （drasl 缺 clientToken 一律 403，这是「重启后无法重新登录」的直接原因）。
         assertThat(fake.lastUrl()).isEqualTo(REFRESH_URL);
         assertThat(fake.lastBody().getAsJsonObject().get("accessToken").getAsString())
                 .isEqualTo("old-injector-token");
+        assertThat(fake.lastBody().getAsJsonObject().get("clientToken").getAsString())
+                .isEqualTo(CLIENT_TOKEN);
+    }
+
+    @Test
+    void refresh_withoutClientToken_failsWithActionableKey() {
+        FakeHttpGateway fake = new FakeHttpGateway();
+        AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(fake);
+        AuthlibInjectorAccount account = new AuthlibInjectorAccount(
+                "old-injector-token", "OldName", UUID.randomUUID(),
+                SERVER, UUID.randomUUID().toString(), null, null, 0L
+        );
+
+        // 旧版本创建的账号没有 clientToken：不发注定失败的请求，直接给出「重新添加」的提示。
+        assertThatThrownBy(() -> provider.refresh(account))
+                .isInstanceOf(InjectorAuthException.class)
+                .extracting(e -> ((InjectorAuthException) e).getTranslationKey())
+                .isEqualTo("accountsx.account.fail.injector_invalid_token");
+        assertThat(fake.lastUrl()).isNull();
     }
 
     @Test

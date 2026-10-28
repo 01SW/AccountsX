@@ -387,6 +387,17 @@ class AccountRepositoryTest {
             if (v4.has("server"))
                 assertThat(back.get("server").getAsString()).isEqualTo(v4.get("server").getAsString());
         }
+        // clientToken 必须随账号持久化：丢了就是「重启后刷新 403」。
+        String clientToken = "0123456789abcdef0123456789abcdef";
+        var withToken = injector("Steve", "https://example.invalid/api/yggdrasil", uuid);
+        withToken.setClientTokenForMigration(clientToken);
+        JsonObject persisted = AccountRepository.toJson(withToken);
+        assertThat(persisted.getAsJsonObject("credentials").get("clientToken").getAsString())
+                .isEqualTo(clientToken);
+        var restored = (top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount)
+                AccountRepository.fromJson(persisted);
+        assertThat(restored.getClientToken()).isEqualTo(clientToken);
+
         // OAuth 信封往返：3→4 不在账号 credentials 放 endpoint/clientId，
         // fromJson 必须按 server 从 servers[] 反查（review a1 的断链回归）。
         com.google.gson.JsonArray servers = JsonParser.parseString(

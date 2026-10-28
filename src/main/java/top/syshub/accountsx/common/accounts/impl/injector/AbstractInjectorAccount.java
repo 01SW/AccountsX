@@ -13,6 +13,12 @@ public abstract class AbstractInjectorAccount extends BaseAccount {
 
     private volatile String preferredPlayerUUID;
 
+    /**
+     * Yggdrasil clientToken：登录时由客户端生成并交给服务端，之后每次 refresh 都必须原样送回，
+     * 否则 drasl 一类实现直接 403 Invalid token。随账号持久化，缺省表示旧版本创建的账号。
+     */
+    private volatile String clientToken;
+
     public AbstractInjectorAccount(String accessToken, String playerName, UUID playerUUID, String server, String preferredPlayerUUID, AccountType type, String accountName, String avatarKey, long avatarCachedAt) {
         super(accessToken, playerName, playerUUID, type, accountName, avatarKey, avatarCachedAt);
         this.server = server;
@@ -30,6 +36,21 @@ public abstract class AbstractInjectorAccount extends BaseAccount {
 
     public final String getPreferredPlayerUUID() {
         return preferredPlayerUUID;
+    }
+
+    public final String getClientToken() {
+        return clientToken;
+    }
+
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public final void setClientToken(String clientToken) {
+        Threading.checkAccountWorkerThread();
+        setClientTokenForMigration(clientToken);
+    }
+
+    /** 与 {@link #setClientToken} 同效果但无线程检查：仅供 {@code AccountRepository} 还原持久化值。 */
+    public final void setClientTokenForMigration(String clientToken) {
+        this.clientToken = clientToken;
     }
 
     @Threading.Thread(Threading.ThreadRole.WORKER)
