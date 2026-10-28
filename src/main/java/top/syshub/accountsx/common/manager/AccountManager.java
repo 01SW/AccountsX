@@ -123,6 +123,7 @@ public final class AccountManager {
         // drop 之后仓储的 current 会落回默认账号，所以要先把「删的是不是当前账号」问出来。
         boolean wasCurrent = repository().getCurrent() == account;
         repository().drop(account);
+        signOut(List.of(account));
 
         if (wasCurrent) {
             switchToFallback();
@@ -143,9 +144,25 @@ public final class AccountManager {
             return;
         }
 
+        // 账号对象在 drop 之后就不在列表里了，撤销令牌要用，先取一份。
+        List<BaseAccount> affected = repository().accountsOn(server.apiRoot());
         repository().authServers().remove(server.kind(), server.apiRoot());
         if (repository().dropAccountsOn(server.apiRoot())) {
             switchToFallback();
+        }
+        signOut(affected);
+    }
+
+    /**
+     * 删除账号后尽力让服务端作废令牌（B13）。
+     *
+     * <p>投到串行通道：删除本身是客户端线程上的即时操作，撤销是收尾——不能让它阻塞界面，
+     * 也不能让网络失败影响删除结果。provider 自己吞掉所有异常（见
+     * {@link AccountProvider#signOut}）。</p>
+     */
+    private static void signOut(List<BaseAccount> accounts) {
+        for (BaseAccount account : accounts) {
+            TaskScheduler.submit(() -> AccountProvider.getProvider(account).signOut(account));
         }
     }
 
@@ -283,6 +300,22 @@ public final class AccountManager {
         }
     }
 
+    /**
+     * 问 provider「现有令牌还能直接复用吗」（B4）。
+     *
+     * <p>任何异常都按「不能复用」处理：判定失败退回刷新，虽然多换一次令牌，但绝不会因为一次
+     * 探测失败就把账号留在未授权状态。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    private static boolean isTokenReusable(BaseAccount account) {
+        try {
+            return AccountProvider.getProvider(account).canReuseToken(account);
+        } catch (IOException | RuntimeException e) {
+            AccountsX.LOGGER.debug("Cannot check whether the token can be reused; refreshing instead.", e);
+            return false;
+        }
+    }
+
     @Threading.Thread(Threading.ThreadRole.WORKER)
     private static void doRefreshAccount(BaseAccount account, boolean thrown) throws IOException {
         if (Thread.currentThread().isInterrupted()) {
@@ -293,6 +326,14 @@ public final class AccountManager {
                 return;
             }
         }
+        if (isTokenReusable(account)) {
+            // 令牌仍有效：不刷新。refresh 会作废旧令牌（Yggdrasil 刷新即递增版本号），
+            // 而账号 state 是 transient 的、每次启动都按未授权处理——无条件刷新等于每启动
+            // 一次换一次令牌，同一账号在别的客户端/实例上就会被顶掉（B4/B14）。
+            account.setProfileState(AccountState.AUTHORIZED);
+            return;
+        }
+
         account.setProfileState(AccountState.AUTHORIZING);
         try {
             AccountProvider.getProvider(account).refresh(account);

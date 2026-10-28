@@ -60,6 +60,15 @@ public abstract class BaseAccount {
 
         private final transient AccountState state;
 
+        /**
+         * 当前 accessToken 的过期时刻（epoch 毫秒）；0 表示未知。
+         *
+         * <p>Yggdrasil 规范里 {@code /authserver/refresh} 不保证返回 {@code expires_in}，所以外置账号
+         * 多数时候是 0：它们靠 {@code /authserver/validate} 判断令牌是否还能用（不联网轮换）。
+         * 微软链路一定会返回 {@code expires_in}，据此可以跳过整条 Xbox → Minecraft 换票。</p>
+         */
+        private final long expiresAt;
+
         // Gson 通过反射（getDeclaredConstructor）调用此无参构造器反序列化 storage。
         // 同时它是 transient 的 state 唯一赋默认值之处：UNAUTHORIZED（不进 JSON，反序列化后保持）。
         // 若删除，Gson 回退到 Unsafe.allocateInstance，state 会变为 null 而非 UNAUTHORIZED，
@@ -69,13 +78,19 @@ public abstract class BaseAccount {
             this.accessToken = null;
             this.playerName = null;
             this.playerUUID = null;
+            this.expiresAt = 0L;
             this.state = AccountState.UNAUTHORIZED;
         }
 
         private AccountStorage(String accessToken, String playerName, UUID playerUUID, AccountState state) {
+            this(accessToken, playerName, playerUUID, 0L, state);
+        }
+
+        private AccountStorage(String accessToken, String playerName, UUID playerUUID, long expiresAt, AccountState state) {
             this.accessToken = accessToken;
             this.playerName = playerName;
             this.playerUUID = playerUUID;
+            this.expiresAt = expiresAt;
             this.state = state;
         }
 
@@ -93,6 +108,10 @@ public abstract class BaseAccount {
 
         public AccountState getState() {
             return state;
+        }
+
+        public long getExpiresAt() {
+            return expiresAt;
         }
     }
 
@@ -154,7 +173,33 @@ public abstract class BaseAccount {
     public final void setProfile(String accessToken, String playerName, UUID playerUUID) {
         Threading.checkAccountWorkerThread();
 
-        this.storage = new AccountStorage(accessToken, playerName, playerUUID, AccountState.AUTHORIZED);
+        this.storage = new AccountStorage(accessToken, playerName, playerUUID, 0L, AccountState.AUTHORIZED);
+    }
+
+    /** 同 {@link #setProfile(String, String, UUID)}，并记录服务端给出的令牌过期时刻（epoch 毫秒）。 */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public final void setProfile(String accessToken, String playerName, UUID playerUUID, long expiresAt) {
+        Threading.checkAccountWorkerThread();
+
+        this.storage = new AccountStorage(accessToken, playerName, playerUUID, expiresAt, AccountState.AUTHORIZED);
+    }
+
+    /**
+     * 记录当前 accessToken 的过期时刻（epoch 毫秒，0 表示未知）。
+     *
+     * <p>只由 provider 在拿到 {@code expires_in} 后调用；下一次启动据此判断能否直接复用令牌，
+     * 不必为了确认有效期把令牌轮换一遍。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public final void setTokenExpiry(long expiresAt) {
+        Threading.checkAccountWorkerThread();
+        setTokenExpiryForLoad(expiresAt);
+    }
+
+    /** 与 {@link #setTokenExpiry} 同效果但无线程检查：仅 {@code AccountRepository.fromJson} 还原持久化值。 */
+    public final void setTokenExpiryForLoad(long expiresAt) {
+        AccountStorage s = this.storage;
+        this.storage = new AccountStorage(s.accessToken, s.playerName, s.playerUUID, expiresAt, s.state);
     }
 
     @Threading.Thread(Threading.ThreadRole.WORKER)
@@ -162,6 +207,6 @@ public abstract class BaseAccount {
         Threading.checkAccountWorkerThread();
 
         AccountStorage s = this.storage;
-        this.storage = new AccountStorage(s.accessToken, s.playerName, s.playerUUID, state);
+        this.storage = new AccountStorage(s.accessToken, s.playerName, s.playerUUID, s.expiresAt, state);
     }
 }

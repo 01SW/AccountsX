@@ -27,6 +27,9 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
 
     private static final String TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 
+    /** 过期判定的安全余量：提前 60 秒视为过期，避免「刚好在过期瞬间」拿旧令牌进游戏。 */
+    private static final long EXPIRY_SKEW_MS = 60_000L;
+
     private final HttpGateway http;
 
     @Override
@@ -161,12 +164,14 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         }
 
         String accessToken;
+        long expiresAt;
         {
             JsonObject root = new JsonObject();
             root.addProperty("identityToken", String.format("XBL3.0 x=%s;%s", userHash, xstsToken));
 
             JsonObject json = http.postJson(MicrosoftConstants.MS_LOGIN_XBOX, root);
             accessToken = json.get("access_token").getAsString();
+            expiresAt = expiryOf(json);
         }
 
         String playerName, playerUUID;
@@ -190,8 +195,23 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
                 microsoftAccessToken,
                 microsoftRefreshToken,
                 avatar == null ? null : avatar.key(),
-                avatar == null ? 0L : avatar.cachedAt()
+                avatar == null ? 0L : avatar.cachedAt(),
+                expiresAt
         );
+    }
+
+    /**
+     * 从 token 响应里算出过期时刻（epoch 毫秒），0 表示未知。
+     *
+     * <p>字段缺失或不是正数时一律当未知——宁可下次启动完整刷新一次，也不要因为解析问题
+     * 把已过期的令牌当成可复用。</p>
+     */
+    private static long expiryOf(JsonObject json) {
+        JsonElement expiresIn = json.get("expires_in");
+        if (expiresIn == null || !expiresIn.isJsonPrimitive() || !expiresIn.getAsJsonPrimitive().isNumber())
+            return 0L;
+        long seconds = expiresIn.getAsLong();
+        return seconds <= 0 ? 0L : System.currentTimeMillis() + seconds * 1000L - EXPIRY_SKEW_MS;
     }
 
     @Override
@@ -244,12 +264,14 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
         }
 
         String accessToken;
+        long expiresAt;
         {
             JsonObject root = new JsonObject();
             root.addProperty("identityToken", String.format("XBL3.0 x=%s;%s", userHash, xstsToken));
 
             JsonObject json = http.postJson(MicrosoftConstants.MS_LOGIN_XBOX, root);
             accessToken = json.get("access_token").getAsString();
+            expiresAt = expiryOf(json);
         }
 
         String playerName, playerUUID;
@@ -265,8 +287,28 @@ public class MicrosoftAccountProvider implements AccountProvider<MicrosoftAccoun
             playerUUID = json.get("id").getAsString();
         }
 
-        account.setProfile(accessToken, playerName, AccountUUID.parse(playerUUID));
+        account.setProfile(accessToken, playerName, AccountUUID.parse(playerUUID), expiresAt);
         AvatarService.AvatarKey avatar = AvatarService.fetch(http, SESSION + "/session/minecraft/profile/", playerUUID);
         account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+    }
+
+    /**
+     * 微软的 MC accessToken 自带 {@code expires_in}，到期前可以直接复用，省掉整条
+     * MSA → Xbox Live → XSTS → Minecraft 换票（五次请求）。
+     *
+     * <p>过期时刻未知（0）时返回 {@code false}：宁可多刷新一次，也不要把死令牌带进游戏。</p>
+     */
+    @Override
+    public boolean canReuseToken(MicrosoftAccount account) {
+        long expiresAt = account.getAccountStorage().getExpiresAt();
+        return expiresAt > 0 && System.currentTimeMillis() < expiresAt;
+    }
+
+    /**
+     * 微软没有公开的单令牌撤销端点（注销需要用户在账号页面交互式移除应用授权），
+     * 因此删除账号只清本地凭据，服务端令牌靠自然过期。
+     */
+    @Override
+    public void signOut(MicrosoftAccount account) {
     }
 }

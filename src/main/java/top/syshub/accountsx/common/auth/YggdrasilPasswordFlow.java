@@ -94,11 +94,17 @@ public final class YggdrasilPasswordFlow {
         }
 
         JsonElement errorMessage = json.get("errorMessage");
-        String detail = errorMessage != null && errorMessage.isJsonPrimitive() ? errorMessage.getAsString() : "";
-        throw new InjectorAuthException(
-                translationKey,
-                "Cannot auth this injector: " + error + (detail.isEmpty() ? "" : " - " + detail)
-        );
+        String detail = errorMessage != null && errorMessage.isJsonPrimitive()
+                ? errorMessage.getAsString().trim() : "";
+        // 界面上只展示服务端自己写的说明：它已经是给用户看的语言（drasl 会本地化），
+        // 而 error 码（ForbiddenOperationException 之类）是给程序看的英文类名，两个叠在一起
+        // 只会把「密码错了」这条唯一有用的信息淹掉。没有说明时才退回错误码。
+        throw new InjectorAuthException(translationKey, detail.isEmpty() ? primitiveText(error) : detail);
+    }
+
+    /** 把 error 字段渲染成一句文本：字符串取原值（不带 JSON 引号），其余形状保留原文。 */
+    private static String primitiveText(JsonElement element) {
+        return element.isJsonPrimitive() ? element.getAsString() : element.toString();
     }
 
     /**
@@ -315,6 +321,33 @@ public final class YggdrasilPasswordFlow {
         // 头像属于可选附加信息，失败由 AvatarService 自行吞掉。
         AvatarService.AvatarKey avatar = AvatarService.fetch(http, profileUrl, profile.playerUuid());
         account.setAvatar(avatar == null ? null : avatar.key(), avatar == null ? 0L : avatar.cachedAt());
+    }
+
+    /**
+     * 用 {@code /authserver/validate} 判断现有 accessToken 还能不能用（B4）。
+     *
+     * <p>规范：成功是 {@code 204 No Content}（无响应体），失败是 {@code 403} + error 体。与
+     * {@link #refresh} 的关键区别是它**不轮换令牌**——启动时该走这条：令牌还有效就不要重新签发，
+     * 否则同一账号在别的客户端/实例上会立刻失效（drasl 刷新即作废旧 accessToken）。</p>
+     *
+     * <p>只在服务端**明确确认**有效时返回 {@code true}（空响应体）。任何有内容的响应都按「不确定」
+     * 处理返回 {@code false}，让调用方退回刷新：刷新虽然会轮换令牌，但至少能拿到可用令牌；
+     * 反过来把 500 的错误体误判成有效，会让账号带着一个已死的令牌进入游戏。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.WORKER)
+    public static boolean validate(HttpGateway http, AuthServer server, String accessToken, String clientToken)
+            throws IOException {
+        JsonObject root = new JsonObject();
+        root.addProperty("accessToken", accessToken);
+        // clientToken 可以不带：服务端只在登录时收到过才要求比对。带上则精确复现登录上下文。
+        if (clientToken != null && !clientToken.isEmpty()) {
+            root.addProperty("clientToken", clientToken);
+        }
+
+        // ignoreHttpStatus=true：403 的错误体要留给调用方判断，状态码由网关校验只会剩下 "HTTP 403"。
+        JsonObject json = http.postJson(server.apiRoot() + "/authserver/validate", root, true);
+        // 204 无响应体：网关把空响应体解析成 null。个别实现回 200 + 空对象，同样视为明确确认。
+        return json == null || json.isEmpty();
     }
 
     /**

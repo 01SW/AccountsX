@@ -1,0 +1,166 @@
+package top.syshub.accountsx.common.accounts.impl.injector;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider;
+import top.syshub.accountsx.common.auth.AuthServer;
+import top.syshub.accountsx.common.auth.AuthServerKind;
+import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.net.HttpGateway;
+import top.syshub.accountsx.common.net.JdkHttpGateway;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+/**
+ * 令牌生命周期：启动复用（B4）与删除撤销（B13）。
+ *
+ * <p>两件事必须在 provider 层验证，因为它们都是「发哪个请求、失败怎么办」的决定：复用走
+ * {@code /authserver/validate}（不轮换令牌），撤销走 {@code /authserver/invalidate}（失败必须静默）。</p>
+ */
+class InjectorTokenLifecycleTest {
+
+    private static final String API_ROOT = "https://ygg.invalid/api/yggdrasil";
+
+    /** 记录 POST、可按需返回空体/错误体或抛 IO 的假网关。 */
+    private static final class RecordingGateway implements HttpGateway {
+        private final List<String> urls = new ArrayList<>();
+        private final List<JsonElement> bodies = new ArrayList<>();
+        private JsonObject response;
+        private boolean offline;
+
+        @Override
+        public JsonObject get(String url) {
+            throw new UnsupportedOperationException("fake: get not expected");
+        }
+
+        @Override
+        public JsonObject get(String url, Map<String, String> headers) {
+            throw new UnsupportedOperationException("fake: get(headers) not expected");
+        }
+
+        @Override
+        public JsonObject postJson(String url, JsonElement body) throws IOException {
+            return postJson(url, body, false);
+        }
+
+        @Override
+        public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) throws IOException {
+            this.urls.add(url);
+            this.bodies.add(body);
+            if (this.offline) {
+                throw new IOException("fake: network down");
+            }
+            return this.response;
+        }
+
+        @Override
+        public JsonObject postForm(String url, Map<String, String> formData) {
+            throw new UnsupportedOperationException("fake: postForm not expected");
+        }
+
+        @Override
+        public JsonObject postForm(String url, Map<String, String> formData, boolean ignoreHttpStatus) {
+            throw new UnsupportedOperationException("fake: postForm(ignore) not expected");
+        }
+
+        @Override
+        public Headers getHeaders(String url) {
+            throw new UnsupportedOperationException("fake: getHeaders not expected");
+        }
+
+        @Override
+        public byte[] getBinary(String url) {
+            throw new UnsupportedOperationException("fake: getBinary not expected");
+        }
+
+        JsonObject body(int index) {
+            return this.bodies.get(index).getAsJsonObject();
+        }
+    }
+
+    private final RecordingGateway gateway = new RecordingGateway();
+
+    private final AuthlibInjectorAccountProvider provider = new AuthlibInjectorAccountProvider(this.gateway);
+
+    @BeforeEach
+    void installRegistry() {
+        AuthServerRegistry registry = new AuthServerRegistry(JdkHttpGateway.INSTANCE);
+        JsonArray servers = new JsonArray();
+        servers.add(new AuthServer(API_ROOT, AuthServerKind.YGGDRASIL, "FakeInjector", null, 0L).toJson());
+        // load() 纯内存：不要用 add()，那会真的去探测 https://ygg.invalid。
+        registry.load(servers);
+        AbstractInjectorAccountProvider.installRegistry(registry);
+    }
+
+    private static AuthlibInjectorAccountProvider.AuthlibInjectorAccount account(String accessToken) {
+        return new AuthlibInjectorAccountProvider.AuthlibInjectorAccount(accessToken, "Alex",
+                UUID.fromString("11111111-1111-1111-1111-111111111111"), API_ROOT, null, "FakeInjector", null, 0L);
+    }
+
+    @Test
+    void canReuseToken_validateSucceeds_returnsTrue() throws Exception {
+        // 204：网关解析成 null，是「令牌仍有效」的唯一确定答复。
+        this.gateway.response = null;
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = account("fake-access");
+        account.setClientTokenForMigration("fake-client-token");
+
+        assertThat(this.provider.canReuseToken(account)).isTrue();
+
+        assertThat(this.gateway.urls).containsExactly(API_ROOT + "/authserver/validate");
+        assertThat(this.gateway.body(0).get("accessToken").getAsString()).isEqualTo("fake-access");
+        assertThat(this.gateway.body(0).get("clientToken").getAsString()).isEqualTo("fake-client-token");
+    }
+
+    @Test
+    void canReuseToken_errorBody_returnsFalse() throws Exception {
+        JsonObject error = new JsonObject();
+        error.addProperty("error", "ForbiddenOperationException");
+        this.gateway.response = error;
+
+        assertThat(this.provider.canReuseToken(account("fake-access"))).isFalse();
+    }
+
+    @Test
+    void canReuseToken_withoutToken_skipsNetwork() throws Exception {
+        assertThat(this.provider.canReuseToken(account(null))).isFalse();
+        assertThat(this.gateway.urls).isEmpty();
+    }
+
+    @Test
+    void signOut_postsInvalidateWithToken() {
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = account("fake-access");
+        account.setClientTokenForMigration("fake-client-token");
+
+        this.provider.signOut(account);
+
+        assertThat(this.gateway.urls).containsExactly(API_ROOT + "/authserver/invalidate");
+        assertThat(this.gateway.body(0).get("accessToken").getAsString()).isEqualTo("fake-access");
+        assertThat(this.gateway.body(0).get("clientToken").getAsString()).isEqualTo("fake-client-token");
+    }
+
+    @Test
+    void signOut_networkFailure_isSwallowed() {
+        // 账号已经删了：撤销失败只能留个日志，绝不能把异常抛回删除链路。
+        this.gateway.offline = true;
+        AuthlibInjectorAccountProvider.AuthlibInjectorAccount account = account("fake-access");
+
+        assertThatCode(() -> this.provider.signOut(account)).doesNotThrowAnyException();
+        assertThat(this.gateway.urls).hasSize(1);
+    }
+
+    @Test
+    void signOut_withoutToken_skipsNetwork() {
+        this.provider.signOut(account(null));
+        assertThat(this.gateway.urls).isEmpty();
+    }
+}

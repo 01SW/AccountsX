@@ -1,5 +1,8 @@
 package top.syshub.accountsx.common.accounts.impl.injector;
 
+import com.google.gson.JsonObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import top.syshub.accountsx.common.accounts.AccountProvider;
 import top.syshub.accountsx.common.accounts.AccountUUID;
 import top.syshub.accountsx.common.accounts.model.context.AccountContext;
@@ -38,6 +41,8 @@ import java.util.function.BooleanSupplier;
  * 服务器来自左栏筛选（{@link AuthServer}），因此这里没有通用表单，也不需要解析 locator。</p>
  */
 public abstract class AbstractInjectorAccountProvider<T extends AbstractInjectorAccount> implements AccountProvider<T> {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AbstractInjectorAccountProvider.class);
 
     private static volatile AuthServerRegistry registry;
 
@@ -156,6 +161,53 @@ public abstract class AbstractInjectorAccountProvider<T extends AbstractInjector
             return;
         }
         YggdrasilPasswordFlow.refresh(http, account);
+    }
+
+    /**
+     * 启动时先问服务端「这个令牌还能用吗」（B4）。能用就跳过刷新——**refresh 会作废旧令牌**，
+     * 而账号 state 是 transient 的、每次启动都按未授权处理，无条件刷新等于每启动一次换一次令牌，
+     * 同账号在别的客户端/实例上就立刻 401。
+     *
+     * <p>device-code 账号一样适用：validate 用的是 storage 里的 accessToken；loginToken 里放的是
+     * OAuth 信封，不能拿去问服务器。</p>
+     */
+    @Override
+    public boolean canReuseToken(T account) throws IOException {
+        String accessToken = account.getAccountStorage().getAccessToken();
+        if (accessToken == null || accessToken.isEmpty())
+            return false;
+        return YggdrasilPasswordFlow.validate(http, serverFor(account), accessToken, account.getClientToken());
+    }
+
+    /**
+     * 删除账号时尽力让服务端作废令牌（B13）：{@code /authserver/invalidate} 是 Yggdrasil 的撤销端点。
+     *
+     * <p>必须自己吞掉异常——账号已经从界面上消失，这里失败最多留下一个服务端仍有效的令牌，
+     * 不能让删除报错或回滚。令牌已经失效时服务端回 403，同样属于正常收尾，用
+     * {@code ignoreHttpStatus=true} 避免把它当异常。</p>
+     */
+    @Override
+    public void signOut(T account) {
+        String accessToken = account.getAccountStorage().getAccessToken();
+        if (accessToken == null || accessToken.isEmpty())
+            return;
+        try {
+            JsonObject body = new JsonObject();
+            body.addProperty("accessToken", accessToken);
+            String clientToken = account.getClientToken();
+            if (clientToken != null && !clientToken.isEmpty())
+                body.addProperty("clientToken", clientToken);
+            http.postJson(serverFor(account).apiRoot() + "/authserver/invalidate", body, true);
+        } catch (IOException | RuntimeException e) {
+            LOGGER.debug("Cannot invalidate the token of the removed account.", e);
+        }
+    }
+
+    private static AuthServer serverFor(AbstractInjectorAccount account) throws IOException {
+        AuthServer server = registry().byApiRoot(account.getServer());
+        if (server == null)
+            throw new IOException("认证服务器不在列表中: " + account.getServer());
+        return server;
     }
 
     /** 三种登录入口共用的落地映射：建账号 + clientToken + 有 refresh_token 就写 OAuth 信封。 */

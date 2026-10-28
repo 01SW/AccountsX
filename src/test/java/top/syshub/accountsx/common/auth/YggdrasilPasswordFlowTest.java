@@ -7,9 +7,11 @@ import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.impl.injector.InjectorAuthException;
 import top.syshub.accountsx.common.net.HttpGateway;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -85,9 +87,16 @@ class YggdrasilPasswordFlowTest {
     private static final class RoutingGateway implements HttpGateway {
         private final Map<String, JsonObject> responses = new LinkedHashMap<>();
         private final Map<String, JsonElement> bodies = new LinkedHashMap<>();
+        private final Set<String> empties = new HashSet<>();
 
         RoutingGateway reply(String path, JsonObject response) {
             this.responses.put(API_ROOT + path, response);
+            return this;
+        }
+
+        /** 204 No Content：真网关把空响应体解析成 null（validate 成功就是这个形状）。 */
+        RoutingGateway replyEmpty(String path) {
+            this.empties.add(API_ROOT + path);
             return this;
         }
 
@@ -110,6 +119,9 @@ class YggdrasilPasswordFlowTest {
         @Override
         public JsonObject postJson(String url, JsonElement body, boolean ignoreHttpStatus) {
             this.bodies.put(url, body);
+            if (this.empties.contains(url)) {
+                return null;
+            }
             JsonObject response = this.responses.get(url);
             if (response == null) {
                 throw new AssertionError("unexpected POST " + url);
@@ -327,5 +339,59 @@ class YggdrasilPasswordFlowTest {
                 .hasMessageContaining("does not contain any player profile")
                 .extracting(e -> ((InjectorAuthException) e).getTranslationKey())
                 .isEqualTo("accountsx.account.fail.injector_login");
+    }
+
+    @Test
+    void authenticate_errorWithoutMessage_fallsBackToErrorCode() {
+        // 有的服务端只给 error 码不给 errorMessage：提示里必须还有东西可读，不能是空串。
+        JsonObject body = new JsonObject();
+        body.addProperty("error", "ForbiddenOperationException");
+        RoutingGateway fake = new RoutingGateway().reply("/authserver/authenticate", body);
+
+        assertThatThrownBy(() -> YggdrasilPasswordFlow.authenticate(fake, SERVER, "fake-user", "fake-pass"))
+                .isInstanceOf(InjectorAuthException.class)
+                .hasMessageContaining("ForbiddenOperationException");
+    }
+
+    @Test
+    void authenticate_blankErrorMessage_fallsBackToErrorCode() {
+        RoutingGateway fake = new RoutingGateway()
+                .reply("/authserver/authenticate", error("ForbiddenOperationException", "   "));
+
+        assertThatThrownBy(() -> YggdrasilPasswordFlow.authenticate(fake, SERVER, "fake-user", "fake-pass"))
+                .isInstanceOf(InjectorAuthException.class)
+                .hasMessageContaining("ForbiddenOperationException");
+    }
+
+    // ── B4：/authserver/validate 判定 ──
+
+    @Test
+    void validate_noContent_confirmsTokenAndSendsClientToken() throws Exception {
+        RoutingGateway fake = new RoutingGateway().replyEmpty("/authserver/validate");
+
+        boolean valid = YggdrasilPasswordFlow.validate(fake, SERVER, "fake-access", "fake-client-token");
+
+        // 只有 204（空响应体）才算明确有效——这是唯一「令牌还能用」的确定信号。
+        assertThat(valid).isTrue();
+        JsonObject body = fake.body("/authserver/validate");
+        assertThat(body.get("accessToken").getAsString()).isEqualTo("fake-access");
+        assertThat(body.get("clientToken").getAsString()).isEqualTo("fake-client-token");
+    }
+
+    @Test
+    void validate_withoutClientToken_omitsTheField() throws Exception {
+        RoutingGateway fake = new RoutingGateway().replyEmpty("/authserver/validate");
+
+        assertThat(YggdrasilPasswordFlow.validate(fake, SERVER, "fake-access", "")).isTrue();
+        assertThat(fake.body("/authserver/validate").has("clientToken")).isFalse();
+    }
+
+    @Test
+    void validate_errorBody_isNotTreatedAsValid() throws Exception {
+        // 403 + error 体（ignoreHttpStatus=true 才读得到）：判无效，调用方退回刷新而不是带着死令牌进游戏。
+        RoutingGateway fake = new RoutingGateway()
+                .reply("/authserver/validate", error("ForbiddenOperationException", "Invalid token."));
+
+        assertThat(YggdrasilPasswordFlow.validate(fake, SERVER, "fake-access", null)).isFalse();
     }
 }

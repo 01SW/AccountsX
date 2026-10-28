@@ -82,14 +82,14 @@ AccountsX（根项目 / common）
 │   │   ├── ui/                          # 版本无关的 Translator / SelectionStyle / 列表模型
 │   │   ├── net/                         # HttpGateway 接口 + JdkHttpGateway（可注入网络层）
 │   │   └── utils/                       # Threading / NetworkUtils / UnsafeVM / AvatarService（头像获取+落盘编排，无 AWT）
-│   │       └── image/                  # 头像渲染+落盘（AvatarRenderer / AwtAvatarRenderer / AvatarCache；AWT/ImageIO 在 common 内白名单放行）
+│   │       └── image/                  # 头像渲染+落盘+像素解码（AvatarRenderer / AwtAvatarRenderer / AvatarCache / AvatarPixels；AWT/ImageIO 在 common 内白名单放行）
 ├── adapters/
 │   ├── authlib/<ver>/               # authlib API 桥接（6 个版本）
 │   └── mc/<mc-ver>/                 # MC 客户端 API + UI + Mixins（13 个版本）
 │   └── ├── buildSrc/                        # 预编译 Gradle 插件（3 个）
 └── src/main/resources/
     ├── fabric.mod.json              # 核心模组元数据
-    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 64 个 key）
+    ├── assets/accountsx/lang/       # i18n（en_us.json + zh_cn.json，各 65 个 key）
     └── assets/accountsx/textures/gui/  # GUI 资源单一数据源：account.png（切换图标）、
                                         #  sprites/icon/account.png（标题屏精灵）、alex_avatar.png（默认头像）
 ```
@@ -134,7 +134,13 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 5. `loginAccount` → authlib 适配器构建 `AccountSession` → 客户端线程 `switchAccount` 重连 MC session/sessionService/skin 等
 6. 删除正在使用的账号：仓储把 current 指针落回默认账号（`ENV_DEFAULT`，即启动器会话），随后 Manager 在 worker 上登录它、在客户端线程上切回会话——与会话切换同一条链路；没有环境账号可回落时指针清空、游戏会话维持原样
 
-外置认证的密码登录分两段：先 `/authserver/authenticate` 只拿令牌与角色清单，用户在界面上勾选角色（单角色或服务端已 bound 时跳过）后，再对每个角色发一次带 `selectedProfile` 的 `/authserver/refresh` 完成绑定——一个账号有几个角色就建几个账号，全部入库后只切换第一个。Yggdrasil 没有独立的「选角色」端点，绑定只能靠 refresh；而刷新时也带 `selectedProfile`（取账号的 preferredPlayerUUID），否则服务端不知道该把令牌绑回哪个角色。
+启动刷新先问 `AccountProvider.canReuseToken`：外置账号发 `/authserver/validate`（204 空体才算仍有效），微软账号按落盘的 `expiresAt` 判断；能复用就跳过 refresh，否则每次启动都会轮换令牌，把同一账号在别的实例里顶掉。`expiresAt` 未知（0）时一律按需刷新。
+
+删除账号、或删除账号所属的认证服务器时，Manager 在 worker 上逐个异步调用 `AccountProvider.signOut`：外置账号发 `/authserver/invalidate` 让服务端作废令牌，网络失败只记 debug 日志（账号已经删了，撤销失败不能把异常抛回删除链路）；微软没有单令牌撤销端点，实现为空。
+
+外置认证的密码登录分两段：先 `/authserver/authenticate` 只拿令牌与角色清单，用户在界面上勾选角色（单角色或服务端已 bound 时跳过）后，再对每个角色发一次带 `selectedProfile` 的 `/authserver/refresh` 完成绑定——一个账号有几个角色就建几个账号，全部入库后切换到服务端原本已绑定的那个角色（没有绑定记录则用第一个）。Yggdrasil 没有独立的「选角色」端点，绑定只能靠 refresh；而刷新时也带 `selectedProfile`（取账号的 preferredPlayerUUID），否则服务端不知道该把令牌绑回哪个角色。
+
+多角色选择态会显示每个角色的头像：头像由 common 的 `AvatarPixels` 解码成 ARGB 网格，界面侧用 `fill` 逐像素画出——`blit` / `DynamicTexture` 的签名在 1.20 / 1.21.x / 26.x 三代之间各不相同，而这些界面只有 1.20 与 26.x 两份源码、其余版本靠源码回退共享，写死任一签名都会让继承链上的版本编译失败。
 
 `@Threading.Thread` 文档标注预期线程；`Threading.checkMinecraftClientThread()` / `checkAccountWorkerThread()` 强制执行。不要在 worker 线程外调用 profile 修改 API。
 
@@ -144,6 +150,7 @@ universal 任务还会在嵌套的 common 元数据中添加 `fabric-api: *` 依
 - `JsonConfigStore` 原子写；读取或迁移失败时备份并进入只读降级，保存被丢弃。
 - `servers` 里的外置认证服务器条目是账号的登录端点、公钥与 skinDomains 来源；移除条目时连带删除属于它的账号（`AccountRepository.dropAccountsOn`），否则这些账号既登录不了也刷新不了。
 - 旧版本按 `StandardMigrations` 链升级并回写；未知账号条目跳过但保留。
+- 令牌过期时间写在 `credentials.expiresAt`（毫秒，可选）：缺失或 0 表示未知，老配置无需迁移即可读；启动时用它判断能否跳过刷新。
 - `ENV_DEFAULT` 账号不写入磁盘
 - 如存在待迁移的实例配置，先触发一次迁移再加载；全局已有账号时不再重复触发。
 - `servers` 由 `AuthServerRegistry`（`common/auth/`）接管：登录/刷新/建会话只读内存缓存（公钥、skinDomains、OIDC 端点），仅在启动预热与加服（用户在「添加认证服务器」里显式提交）时探测；登录路径直接用现有条目、不再解析 locator；探测失败保留 stale 条目不阻塞；`mojang` / `offline` 为固定条目（无 `apiRoot`），装载时自动补齐。

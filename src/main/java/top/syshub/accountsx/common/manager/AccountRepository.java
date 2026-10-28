@@ -237,6 +237,21 @@ public final class AccountRepository {
     }
 
     /**
+     * 属于某个认证服务器的账号快照。
+     *
+     * <p>{@link #dropAccountsOn} 之后这些对象就不在列表里了，但撤销服务端令牌时仍然需要它们，
+     * 所以删除前先取一份。</p>
+     */
+    public synchronized List<BaseAccount> accountsOn(String apiRoot) {
+        List<BaseAccount> result = new ArrayList<>();
+        for (BaseAccount account : accounts) {
+            if (isOnServer(account, apiRoot))
+                result.add(account);
+        }
+        return List.copyOf(result);
+    }
+
+    /**
      * 删除所有属于 {@code apiRoot} 的账号（认证服务器条目被移除时连带清理）。
      *
      * <p>条目一走，它的登录端点、公钥和 skinDomains 就都读不到了：这些账号既登录不了也刷新不了，
@@ -381,7 +396,7 @@ public final class AccountRepository {
         // 3→4 把 tokenEndpoint/clientId 种在 servers[].oauth，账号 credentials 里没有——
         // 按 server 反查服务器条目补全，还原旧链路的 "OAuth {…}" 信封（字段错配见 P2.4-review a1）。
         JsonObject envelope = oauthEnvelope(credentials, server, servers);
-        return switch (accountType) {
+        BaseAccount loaded = switch (accountType) {
             case OFFLINE -> new OfflineAccount(accessToken, name, uuid);
             case MICROSOFT -> new MicrosoftAccount(accessToken, name, uuid, null, str(credentials.get("refreshToken")), avatarKey, 0L);
             case AUTHLIB_INJECTOR -> {
@@ -396,6 +411,15 @@ public final class AccountRepository {
             }
             default -> null;
         };
+        if (loaded != null)
+            // 缺失/0 表示未知（老文件、Yggdrasil）：保持 0，下次启动靠 validate 判定。
+            loaded.setTokenExpiryForLoad(longValue(credentials.get("expiresAt")));
+        return loaded;
+    }
+
+    /** 数字字段读取：非数字（缺失、null、字符串）一律按 0 处理。 */
+    static long longValue(JsonElement e) {
+        return e instanceof JsonPrimitive p && p.isNumber() ? p.getAsLong() : 0L;
     }
 
     private static AccountType byConfigId(String configId) {
@@ -528,6 +552,9 @@ public final class AccountRepository {
         }
         if (account instanceof MicrosoftAccount ms && ms.getMicrosoftAccountRefreshToken() != null)
             credentials.addProperty("refreshToken", ms.getMicrosoftAccountRefreshToken());
+        if (storage.getExpiresAt() > 0)
+            // 可选字段：老版本文件没有它，读回时按 0（未知）处理，因此不需要迁移跳。
+            credentials.addProperty("expiresAt", storage.getExpiresAt());
         if (!credentials.isEmpty())
             jo.add("credentials", credentials);
         if (account.getAvatarKey() != null)

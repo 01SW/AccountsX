@@ -428,6 +428,29 @@ class AccountRepositoryTest {
     }
 
     @Test
+    void mapping_expiresAtRoundTrips_andStaysOptional() {
+        String uuid = "069a79f444e94726a5befca90e38aaf5";
+        long expiresAt = System.currentTimeMillis() + 3_600_000L;
+        AbstractInjectorAccount account = injector("Steve", "https://example.invalid/api/yggdrasil", uuid);
+        // 测试线程不是 worker：走无线程检查的入口（生产里由 fromJson/登录流程在 worker 上写）。
+        account.setTokenExpiryForLoad(expiresAt);
+
+        JsonObject json = AccountRepository.toJson(account);
+        assertThat(json.getAsJsonObject("credentials").get("expiresAt").getAsLong()).isEqualTo(expiresAt);
+
+        BaseAccount restored = AccountRepository.fromJson(json);
+        assertThat(restored).isNotNull();
+        assertThat(restored.getAccountStorage().getExpiresAt()).isEqualTo(expiresAt);
+
+        // 未知过期时间不写字段：老配置与「服务端没给 expires_in」都用缺席表达 0。
+        AbstractInjectorAccount unknown =
+                injector("Alex", "https://example.invalid/api/yggdrasil", "11111111111111111111111111111111");
+        JsonObject without = AccountRepository.toJson(unknown);
+        assertThat(without.getAsJsonObject("credentials").has("expiresAt")).isFalse();
+        assertThat(AccountRepository.fromJson(without).getAccountStorage().getExpiresAt()).isZero();
+    }
+
+    @Test
     void initialize_loadsPersistedAccounts() throws Exception {
         Files.createDirectories(global.getParent());
         String uuid = "069a79f444e94726a5befca90e38aaf5";
