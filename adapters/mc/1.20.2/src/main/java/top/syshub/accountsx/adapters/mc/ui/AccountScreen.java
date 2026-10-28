@@ -154,6 +154,7 @@ public class AccountScreen extends Screen {
             this.accountListWidget.updateSize(listLeft, listRight, LIST_TOP, listBottom);
         }
         this.accountListWidget.setFilter(this.filters.get(this.selectedFilter).predicate());
+        this.accountListWidget.setReorderable(this.selectedFilter == 0);
         this.addWidget(this.accountListWidget);
 
         if (this.selectedFilter != 0) {

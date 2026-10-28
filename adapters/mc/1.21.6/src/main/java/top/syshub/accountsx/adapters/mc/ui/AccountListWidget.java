@@ -50,6 +50,11 @@ public class AccountListWidget extends ObjectSelectionList<AccountListWidget.Acc
         this.syncAccounts();
     }
 
+    /** 是否允许调整顺序；筛选视图下隐藏上下箭头，避免打乱持久化顺序。 */
+    public void setReorderable(boolean reorderable) {
+        this.model.setReorderable(reorderable);
+    }
+
     public void syncAccounts() {
         this.clearEntries();
         for (top.syshub.accountsx.common.ui.list.AccountRow row : model.rows()) {

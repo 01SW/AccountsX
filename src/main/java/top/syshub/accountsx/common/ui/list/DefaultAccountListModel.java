@@ -20,6 +20,13 @@ public class DefaultAccountListModel implements AccountListModel {
     /** 前两位固定：0 是环境账号，1 是首个存储账号，两者都不参与排序。 */
     private static final int FIRST_MOVABLE = 2;
 
+    private boolean reorderable = true;
+
+    @Override
+    public void setReorderable(boolean reorderable) {
+        this.reorderable = reorderable;
+    }
+
     @Override
     public List<AccountRow> rows() {
         List<AccountRow> result = new ArrayList<>();
@@ -45,6 +52,10 @@ public class DefaultAccountListModel implements AccountListModel {
 
     @Override
     public void onMove(BaseAccount account, int delta) {
+        if (!reorderable) {
+            return;
+        }
+
         int index = indexOf(account);
         if (index < 0) {
             return;
@@ -65,13 +76,13 @@ public class DefaultAccountListModel implements AccountListModel {
 
     @Override
     public boolean canMoveUp(BaseAccount account) {
-        return indexOf(account) >= FIRST_MOVABLE;
+        return reorderable && indexOf(account) >= FIRST_MOVABLE;
     }
 
     @Override
     public boolean canMoveDown(BaseAccount account) {
         int index = indexOf(account);
-        return index >= 0 && index < AccountManager.getAccountsView().size() - 1;
+        return reorderable && index >= 0 && index < AccountManager.getAccountsView().size() - 1;
     }
 
     @Override

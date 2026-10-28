@@ -36,5 +36,13 @@ public interface AccountListModel {
     /** 该账号能否下移。 */
     boolean canMoveDown(BaseAccount account);
 
+    /**
+     * 是否允许调整账号顺序。
+     *
+     * <p>只有「全部账户」视图允许：筛选视图下移动的只是子集，
+     * 会打乱用户预期的持久化顺序。</p>
+     */
+    void setReorderable(boolean reorderable);
+
     boolean isBusy();
 }
