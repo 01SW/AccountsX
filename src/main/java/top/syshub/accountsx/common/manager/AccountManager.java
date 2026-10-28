@@ -151,9 +151,8 @@ public final class AccountManager {
         Threading.checkAccountWorkerThread();
 
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
+            // 刷新成功后 refreshAccount 自己会把 storage 变更落盘，这里不再重复 touch。
             refreshAccount(account, true);
-
-            repository().touch(account);
         }
 
         return Platforms.authlibBridge().createAccountProfile(
@@ -230,5 +229,10 @@ public final class AccountManager {
         if (account.getAccountStorage().getState() != AccountState.AUTHORIZED) {
             throw new IOException("Account provider " + account.getAccountType() + " has finished it's refresh invocation, but neither an exception was thrown nor set the account storage to AUTHORIZED");
         }
+
+        // 刷新会轮换服务端令牌：这一次写入不是「提前落盘」而是必须——下次启动若仍读到旧令牌，
+        // 而旧令牌已被服务端作废，账号就再也登录不上（用户报告的「重启后无法登录」）。
+        // 仓储把写合并到串行通道，连续刷新的多个账号只会产生一次真实落盘。
+        repository().touch(account);
     }
 }
