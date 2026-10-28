@@ -16,6 +16,7 @@ import top.syshub.accountsx.common.accounts.model.AccountType;
 
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.auth.AuthServerRegistry;
+import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccountProvider;
 import top.syshub.accountsx.common.auth.YggdrasilDeviceCodeFlow;
 import top.syshub.accountsx.common.storage.ConfigRoot;
@@ -233,6 +234,38 @@ public final class AccountRepository {
         if (current == account)
             current = defaultAccount();
         markDirty();
+    }
+
+    /**
+     * 删除所有属于 {@code apiRoot} 的账号（认证服务器条目被移除时连带清理）。
+     *
+     * <p>条目一走，它的登录端点、公钥和 skinDomains 就都读不到了：这些账号既登录不了也刷新不了，
+     * 留在列表里只会占位并在下次刷新时报错。</p>
+     *
+     * @return 被删的账号里是否包含当前账号（true 表示调用方需要把游戏会话切回默认账号）
+     */
+    public synchronized boolean dropAccountsOn(String apiRoot) {
+        boolean currentDropped = false;
+        for (BaseAccount account : List.copyOf(accounts)) {
+            if (!isOnServer(account, apiRoot))
+                continue;
+            if (current == account)
+                currentDropped = true;
+            drop(account);
+        }
+        return currentDropped;
+    }
+
+    /**
+     * 账号是否属于某个外置认证服务器：按账号自己保存的 apiRoot 判定。
+     * UI 侧筛选与「删服务器连带删账号」共用这一条规则，避免两处各写一遍。
+     */
+    public static boolean isOnServer(BaseAccount account, String apiRoot) {
+        return account != null
+                && apiRoot != null
+                && account.getAccountType() == AccountType.AUTHLIB_INJECTOR
+                && account instanceof AbstractInjectorAccount injector
+                && apiRoot.equals(injector.getServer());
     }
 
     /**

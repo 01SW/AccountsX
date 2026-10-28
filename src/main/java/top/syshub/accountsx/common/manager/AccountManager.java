@@ -7,6 +7,7 @@ import top.syshub.accountsx.common.accounts.model.AccountState;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.adapters.Platforms;
 import top.syshub.accountsx.common.adapters.api.AccountSession;
+import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.storage.ConfigStore;
 import top.syshub.accountsx.common.storage.JsonConfigStore;
 import top.syshub.accountsx.common.storage.migration.StandardMigrations;
@@ -41,6 +42,11 @@ public final class AccountManager {
 
     public static top.syshub.accountsx.common.auth.AuthServerRegistry authServers() {
         return repository().authServers();
+    }
+
+    /** 账号是否属于某个外置认证服务器（UI 筛选与「删服务器连带删账号」共用同一判定）。 */
+    public static boolean isOnServer(BaseAccount account, String apiRoot) {
+        return AccountRepository.isOnServer(account, apiRoot);
     }
 
     public static void initialize() {
@@ -87,17 +93,39 @@ public final class AccountManager {
         boolean wasCurrent = repository().getCurrent() == account;
         repository().drop(account);
 
-        if (!wasCurrent) {
+        if (wasCurrent) {
+            switchToFallback();
+        }
+    }
+
+    /**
+     * 移除认证服务器，并连带删除属于它的账号。
+     *
+     * <p>服务器条目是账号的登录端点、公钥与 skinDomains 的来源；条目删掉后这些账号既登录不了
+     * 也刷新不了，留着只会在列表里占位。当前账号在其中时回落到默认账号（与单条删除同一链路）。</p>
+     */
+    @Threading.Thread(Threading.ThreadRole.CLIENT)
+    public static void removeServer(AuthServer server) {
+        Threading.checkMinecraftClientThread();
+
+        if (server == null) {
             return;
         }
 
+        repository().authServers().remove(server.kind(), server.apiRoot());
+        if (repository().dropAccountsOn(server.apiRoot())) {
+            switchToFallback();
+        }
+    }
+
+    /** 当前账号被删后回落到默认账号：worker 上登录，客户端线程上切会话（与点击列表项同一条链路）。 */
+    private static void switchToFallback() {
         BaseAccount fallback = repository().getCurrent();
         if (fallback == null) {
             // 没有环境账号可回落：只留下列表，游戏会话维持原样。
             return;
         }
 
-        // 与点击列表项走同一条链路：worker 上登录，客户端线程上切会话。
         TaskScheduler.submit(() -> {
             AccountSession session = loginAccount(fallback);
             Platforms.getMinecraftPlatform().execute(() -> switchAccount(fallback, session));

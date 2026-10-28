@@ -8,6 +8,7 @@ import com.google.common.jimfs.Configuration;
 import com.google.common.jimfs.Jimfs;
 import org.junit.jupiter.api.Test;
 import top.syshub.accountsx.common.accounts.BaseAccount;
+import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.impl.offline.OfflineAccount;
 import top.syshub.accountsx.common.storage.ConfigRoot;
 import top.syshub.accountsx.common.storage.ConfigStore;
@@ -177,6 +178,12 @@ class AccountRepositoryTest {
         return new OfflineAccount(null, name, UUID.fromString(toDashed(uuid32)));
     }
 
+    private static AbstractInjectorAccount injector(String name, String server, String uuid32) {
+        return new top.syshub.accountsx.common.accounts.impl.injector.impl.AuthlibInjectorAccountProvider
+                .AuthlibInjectorAccount("fake-token-" + uuid32, name, UUID.fromString(toDashed(uuid32)),
+                        server, uuid32, name, null, 0L);
+    }
+
     private static String toDashed(String uuid32) {
         return uuid32.substring(0, 8) + "-" + uuid32.substring(8, 12) + "-"
                 + uuid32.substring(12, 16) + "-" + uuid32.substring(16, 20) + "-" + uuid32.substring(20);
@@ -312,6 +319,42 @@ class AccountRepositoryTest {
         repository.drop(steve);
 
         assertThat(repository.getCurrent()).as("没有环境账号可回落 → 指针清空").isNull();
+    }
+
+    @Test
+    void dropAccountsOn_removesOnlyAccountsOfThatServer() throws Exception {
+        AccountRepository repository = repo(MigrationChain.EMPTY);
+        top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount env =
+                new top.syshub.accountsx.common.accounts.impl.env.EnvironmentAccount(
+                        "fake-token", "Player", UUID.randomUUID());
+        repository.initialize(env, null);
+        AbstractInjectorAccount alex = injector("Alex", "https://a.invalid/api/yggdrasil", "069a79f444e94726a5befca90e38aaf5");
+        AbstractInjectorAccount steve = injector("Steve", "https://a.invalid/api/yggdrasil", "069a79f444e94726a5befca90e38aaf6");
+        AbstractInjectorAccount sam = injector("Sam", "https://b.invalid/api/yggdrasil", "069a79f444e94726a5befca90e38aaf7");
+        OfflineAccount off = offline("Off", "069a79f444e94726a5befca90e38aaf8");
+        repository.add(alex);
+        repository.add(steve);
+        repository.add(sam);
+        repository.add(off);
+        repository.setCurrent(steve);
+
+        assertThat(repository.dropAccountsOn("https://a.invalid/api/yggdrasil"))
+                .as("当前账号在该服务器 → 调用方需要切回默认账号").isTrue();
+
+        assertThat(repository.view()).as("只删该服务器的账号，别的服务器与离线账号不动")
+                .containsExactly(env, sam, off);
+        assertThat(repository.getCurrent()).isSameAs(env);
+
+        awaitWrites(writes, 1, "删账号应落盘");
+        TimeUnit.MILLISECONDS.sleep(300);
+        assertThat(writes.get(writes.size() - 1))
+                .contains("069a79f444e94726a5befca90e38aaf7")
+                .doesNotContain("069a79f444e94726a5befca90e38aaf5")
+                .doesNotContain("069a79f444e94726a5befca90e38aaf6");
+
+        assertThat(repository.dropAccountsOn("https://none.invalid/api/yggdrasil"))
+                .as("没有账号属于该服务器").isFalse();
+        assertThat(repository.view()).containsExactly(env, sam, off);
     }
 
     // ── 新旧映射往返 ────────────────────────────────────────────────

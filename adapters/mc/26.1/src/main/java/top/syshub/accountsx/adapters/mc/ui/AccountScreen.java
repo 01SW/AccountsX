@@ -6,7 +6,6 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import top.syshub.accountsx.common.accounts.BaseAccount;
-import top.syshub.accountsx.common.accounts.impl.injector.AbstractInjectorAccount;
 import top.syshub.accountsx.common.accounts.model.AccountType;
 import top.syshub.accountsx.common.auth.AuthServer;
 import top.syshub.accountsx.common.auth.AuthServerKind;
@@ -199,12 +198,9 @@ public class AccountScreen extends Screen {
         return true;
     }
 
+    /** 与「删服务器连带删账号」共用仓储里的同一条判定，避免同一条规则在两处各写一遍。 */
     private static boolean isOnServer(BaseAccount account, String apiRoot) {
-        if (account.getAccountType() != AccountType.AUTHLIB_INJECTOR || !(account instanceof AbstractInjectorAccount injector)) {
-            return false;
-        }
-
-        return apiRoot.equals(injector.getServer());
+        return AccountManager.isOnServer(account, apiRoot);
     }
 
     @Override
@@ -281,13 +277,14 @@ public class AccountScreen extends Screen {
     }
 
     /**
-     * 移除选中的认证服务器。
+     * 移除选中的认证服务器，并连带删除它的账号。
      *
-     * <p>已登录的账号保留（token 仍然有效），只是不再出现在左栏筛选里。删完回到「全部账户」，
+     * <p>服务器条目是这些账号的登录端点、公钥与 skinDomains 来源：条目删掉后它们既登录不了也刷新不了，
+     * 留着只会在列表里占位。当前账号在其中时由 Manager 回落到默认账号。删完回到「全部账户」，
      * 避免选中项指向已经消失的筛选。</p>
      */
     private void removeServer(AuthServer server) {
-        AccountManager.authServers().remove(server.kind(), server.apiRoot());
+        AccountManager.removeServer(server);
         this.selectedFilter = 0;
         this.filterScroll = 0;
         this.rebuildFilters();
